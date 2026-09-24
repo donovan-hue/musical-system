@@ -1,7 +1,17 @@
-export interface MixerCallbacks {
+import type { DeckId } from '../audio/deck.js';
+import type { EqBand } from '../audio/settings.js';
+import { EQ_MAX_DB, EQ_MIN_DB } from '../audio/settings.js';
+
+export interface ChannelCallbacks {
+  onTrim(deck: DeckId, gain: number): void;
+  onEq(deck: DeckId, band: EqBand, db: number): void;
+  onFilter(deck: DeckId, position: number): void;
+  onVolume(deck: DeckId, position: number): void;
+  onCueToggle(deck: DeckId, on: boolean): void;
   onMaster(position: number): void;
   onLimiterToggle(enabled: boolean): void;
   onCrossfader(position: number): void;
+  onCueMix(mix: number): void;
 }
 
 function qs<T extends Element>(root: ParentNode, selector: string): T {
@@ -10,7 +20,10 @@ function qs<T extends Element>(root: ParentNode, selector: string): T {
   return el;
 }
 
-/** Vertical level meter with peak-hold, dB-scaled (-48..0 dB). */
+const EQ_MIN = String(EQ_MIN_DB);
+const EQ_MAX = String(EQ_MAX_DB);
+
+/** Medidor vertical con peak-hold, escala dB (−48..0). */
 class MeterView {
   private peakHold = 0;
 
@@ -28,10 +41,9 @@ class MeterView {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.fillStyle = 'rgba(127,127,127,0.08)';
     ctx.fillRect(0, 0, width, height);
 
-    // Slow-decay peak hold above the instantaneous level.
     const db = level > 0.0001 ? 20 * Math.log10(level) : -60;
     const frac = Math.min(1, Math.max(0, (db + 48) / 48));
     this.peakHold = Math.max(frac, this.peakHold - 0.008);
@@ -50,65 +62,131 @@ class MeterView {
   }
 }
 
-/** Master section: volume, limiter (+ gain-reduction meter), spectrum, crossfader. */
+interface ChannelStrip {
+  trim: HTMLInputElement;
+  high: HTMLInputElement;
+  mid: HTMLInputElement;
+  low: HTMLInputElement;
+  filter: HTMLInputElement;
+  volume: HTMLInputElement;
+  cue: HTMLButtonElement;
+  meter: MeterView;
+}
+
 export class MixerView {
   readonly el: HTMLElement;
-  private readonly deckMeters: Record<'A' | 'B', MeterView>;
+  private readonly channels: Record<DeckId, ChannelStrip>;
   private readonly grFill: HTMLElement;
   private readonly limiterCheckbox: HTMLInputElement;
   private readonly spectrumBins = 56;
   private readonly fftData: Uint8Array<ArrayBuffer>;
 
-  constructor(cb: MixerCallbacks) {
+  constructor(cb: ChannelCallbacks) {
     this.el = document.createElement('section');
     this.el.className = 'mixer';
+    const strip = (id: DeckId): string => `
+      <div class="chstrip" data-deck="${id}">
+        <h3>Ch ${id}</h3>
+        <label class="mk-row">Trim <input class="mk-trim" type="range" min="0" max="2" step="0.01" value="1" aria-label="Ganancia canal ${id}"></label>
+        <label class="mk-row">High <input class="mk-high" type="range" min="${EQ_MIN}" max="${EQ_MAX}" step="1" value="0" aria-label="Agudos canal ${id}"></label>
+        <label class="mk-row">Mid <input class="mk-mid" type="range" min="${EQ_MIN}" max="${EQ_MAX}" step="1" value="0" aria-label="Medios canal ${id}"></label>
+        <label class="mk-row">Low <input class="mk-low" type="range" min="${EQ_MIN}" max="${EQ_MAX}" step="1" value="0" aria-label="Graves canal ${id}"></label>
+        <label class="mk-row mk-filter">Filter <input class="mk-filter" type="range" min="-1" max="1" step="0.01" value="0" aria-label="Filtro canal ${id}"></label>
+        <label class="mk-row">Vol <input class="mk-vol" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen canal ${id}"></label>
+        <button class="btn btn-mini mk-cue" aria-pressed="false" aria-label="CUE de monitorización canal ${id}">CUE</button>
+      </div>`;
+
     this.el.innerHTML = `
-      <h2>Master</h2>
-      <div class="mixer-meters">
-        <canvas class="meter meter-a" title="Nivel Deck A"></canvas>
+      <div class="mixer-grid">
+        ${strip('A')}
         <div class="mixer-center">
-          <label class="ch-row master-row">Vol <input class="master" type="range" min="0" max="1" step="0.01" value="0.8"></label>
+          <h3>Master</h3>
+          <label class="mk-row master-row">Vol <input class="mk-master" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen master"></label>
           <label class="limiter-row">
-            <input class="limiter-toggle" type="checkbox" checked>
+            <input class="limiter-toggle" type="checkbox" checked aria-label="Limitador master">
             <span>Limitador</span>
             <span class="gr-meter" title="Reducción de ganancia"><span class="gr-fill"></span></span>
           </label>
-          <canvas class="spectrum" title="Espectro del bus master"></canvas>
-          <label class="xfader-row">Crossfader <input class="xfader" type="range" min="0" max="1" step="0.01" value="0.5"></label>
-          <div class="xfader-labels"><span>A</span><span>B</span></div>
+          <canvas class="spectrum" aria-label="Espectro del bus master"></canvas>
+          <label class="mk-row">Cue&nbsp;Mix <input class="mk-cuemix" type="range" min="0" max="1" step="0.01" value="0" aria-label="Mezcla de monitorización master/cue"></label>
+          <label class="mk-row xfader-row">A ── XFader ── B <input class="mk-xfader" type="range" min="0" max="1" step="0.01" value="0.5" aria-label="Crossfader"></label>
         </div>
-        <canvas class="meter meter-b" title="Nivel Deck B"></canvas>
+        ${strip('B')}
       </div>
     `;
+
+    const wireChannel = (id: DeckId): ChannelStrip => {
+      const root = qs(this.el, `.chstrip[data-deck="${id}"]`);
+      const s: ChannelStrip = {
+        trim: qs(root, '.mk-trim'),
+        high: qs(root, '.mk-high'),
+        mid: qs(root, '.mk-mid'),
+        low: qs(root, '.mk-low'),
+        filter: qs(root, '.mk-filter'),
+        volume: qs(root, '.mk-vol'),
+        cue: qs(root, '.mk-cue'),
+        meter: new MeterView(qs(root, '.mk-meter')),
+      };
+      s.trim.addEventListener('input', () => cb.onTrim(id, parseFloat(s.trim.value)));
+      s.high.addEventListener('input', () => cb.onEq(id, 'high', parseFloat(s.high.value)));
+      s.mid.addEventListener('input', () => cb.onEq(id, 'mid', parseFloat(s.mid.value)));
+      s.low.addEventListener('input', () => cb.onEq(id, 'low', parseFloat(s.low.value)));
+      s.filter.addEventListener('input', () => cb.onFilter(id, parseFloat(s.filter.value)));
+      s.volume.addEventListener('input', () => cb.onVolume(id, parseFloat(s.volume.value)));
+      s.cue.addEventListener('click', () => {
+        const on = s.cue.getAttribute('aria-pressed') !== 'true';
+        s.cue.setAttribute('aria-pressed', String(on));
+        s.cue.classList.toggle('active', on);
+        cb.onCueToggle(id, on);
+      });
+      return s;
+    };
+
+    this.channels = { A: wireChannel('A'), B: wireChannel('B') };
+
     this.grFill = qs(this.el, '.gr-fill');
     this.limiterCheckbox = qs(this.el, '.limiter-toggle');
     this.fftData = new Uint8Array(this.spectrumBins);
 
-    const masterSlider = qs<HTMLInputElement>(this.el, '.master');
-    masterSlider.addEventListener('input', () => cb.onMaster(parseFloat(masterSlider.value)));
+    const master = qs<HTMLInputElement>(this.el, '.mk-master');
+    master.addEventListener('input', () => cb.onMaster(parseFloat(master.value)));
     this.limiterCheckbox.addEventListener('change', () => cb.onLimiterToggle(this.limiterCheckbox.checked));
-    const xfader = qs<HTMLInputElement>(this.el, '.xfader');
+    const xfader = qs<HTMLInputElement>(this.el, '.mk-xfader');
     xfader.addEventListener('input', () => cb.onCrossfader(parseFloat(xfader.value)));
-
-    this.deckMeters = {
-      A: new MeterView(qs(this.el, '.meter.meter-a')),
-      B: new MeterView(qs(this.el, '.meter.meter-b')),
-    };
+    const cueMix = qs<HTMLInputElement>(this.el, '.mk-cuemix');
+    cueMix.addEventListener('input', () => cb.onCueMix(parseFloat(cueMix.value)));
   }
 
-  /** Sync sliders from persisted state without firing events. */
-  setFaders(master: number, crossfader: number, limiterEnabled: boolean): void {
-    const masterSlider = qs(this.el, '.master') as HTMLInputElement;
-    const xfader = qs(this.el, '.xfader') as HTMLInputElement;
-    masterSlider.value = String(master);
-    xfader.value = String(crossfader);
-    this.limiterCheckbox.checked = limiterEnabled;
+  /** Sync de todos los faders desde el estado persistido, sin disparar eventos. */
+  setFaders(state: {
+    master: number;
+    crossfader: number;
+    limiterEnabled: boolean;
+    cueMix: number;
+    decks: Record<DeckId, { volume: number; eq: { low: number; mid: number; high: number }; trim?: number; filter?: number; cueEnabled?: boolean }>;
+  }): void {
+    (qs(this.el, '.mk-master') as HTMLInputElement).value = String(state.master);
+    (qs(this.el, '.mk-xfader') as HTMLInputElement).value = String(state.crossfader);
+    (qs(this.el, '.mk-cuemix') as HTMLInputElement).value = String(state.cueMix);
+    this.limiterCheckbox.checked = state.limiterEnabled;
+    for (const id of ['A', 'B'] as const) {
+      const strip = this.channels[id];
+      const deck = state.decks[id];
+      strip.volume.value = String(deck.volume);
+      strip.trim.value = String(deck.trim ?? 1);
+      strip.filter.value = String(deck.filter ?? 0);
+      strip.low.value = String(deck.eq.low);
+      strip.mid.value = String(deck.eq.mid);
+      strip.high.value = String(deck.eq.high);
+      const cueOn = deck.cueEnabled ?? false;
+      strip.cue.setAttribute('aria-pressed', String(cueOn));
+      strip.cue.classList.toggle('active', cueOn);
+    }
   }
 
-  update(levels: { a: number; b: number }, limiterReductionDb: number): void {
-    this.deckMeters.A.render(levels.a);
-    this.deckMeters.B.render(levels.b);
-    // Gain-reduction meter: full scale at -20 dB.
+  update(levels: Record<DeckId, number>, limiterReductionDb: number): void {
+    this.channels.A.meter.render(levels.A);
+    this.channels.B.meter.render(levels.B);
     const reduction = Math.min(100, Math.max(0, (-limiterReductionDb / 20) * 100));
     this.grFill.style.width = `${reduction}%`;
   }

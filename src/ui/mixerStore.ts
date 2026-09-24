@@ -1,12 +1,12 @@
-import type { MixerState } from '../audio/settings.js';
+import type { DeckFxSettings, DeckSettings, MixerState } from '../audio/settings.js';
 import { DEFAULT_MIXER_STATE } from '../audio/settings.js';
+import type { FxKind } from '../audio/fx.js';
 
 const KEY = 'musical-system.mixer.v1';
 
 /**
- * Mixer settings survive page reloads: faders, EQ, crossfader, master,
- * limiter and pitch. Loading a track onto a deck never resets them — they are
- * restored from here at boot and re-applied on every load.
+ * Mixer settings survive page reloads: faders, EQ, trim, filtro, FX, cue mix,
+ * crossfader, master, limitador y pitch. Loading a track never resets them.
  */
 export function loadMixerState(): MixerState {
   try {
@@ -17,6 +17,7 @@ export function loadMixerState(): MixerState {
       master: numberOr(parsed.master, DEFAULT_MIXER_STATE.master),
       limiterEnabled: typeof parsed.limiterEnabled === 'boolean' ? parsed.limiterEnabled : true,
       crossfader: numberOr(parsed.crossfader, DEFAULT_MIXER_STATE.crossfader),
+      cueMix: numberOr(parsed.cueMix, DEFAULT_MIXER_STATE.cueMix),
       decks: {
         A: mergeDeck(parsed.decks?.A, DEFAULT_MIXER_STATE.decks.A),
         B: mergeDeck(parsed.decks?.B, DEFAULT_MIXER_STATE.decks.B),
@@ -39,12 +40,26 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function mergeDeck(value: unknown, fallback: { volume: number; eq: { low: number; mid: number; high: number }; pitch: number }) {
+function mergeFx(value: unknown): DeckFxSettings | null {
+  if (value && typeof value === 'object') {
+    const v = value as Record<string, unknown>;
+    if (typeof v.kind === 'string' && typeof v.amount === 'number') {
+      return { kind: v.kind as FxKind, amount: v.amount };
+    }
+  }
+  return null;
+}
+
+function mergeDeck(value: unknown, fallback: DeckSettings): DeckSettings {
   const v = (value ?? {}) as Record<string, unknown>;
   const eq = (v.eq ?? {}) as Record<string, unknown>;
   return {
     volume: numberOr(v.volume, fallback.volume),
     pitch: numberOr(v.pitch, fallback.pitch),
+    trim: numberOr(v.trim, fallback.trim ?? 1),
+    filter: numberOr(v.filter, fallback.filter ?? 0),
+    fx: mergeFx(v.fx),
+    cueEnabled: typeof v.cueEnabled === 'boolean' ? v.cueEnabled : false,
     eq: {
       low: numberOr(eq.low, fallback.eq.low),
       mid: numberOr(eq.mid, fallback.eq.mid),

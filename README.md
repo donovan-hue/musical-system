@@ -1,48 +1,59 @@
-# Musical System — Mezclador DJ
+# Musical System — Cabina DJ Digital
 
-Mezclador DJ de dos decks que corre 100% en el navegador, con biblioteca local persistente.
-Reconstrucción de la especificación del PR #1 (cerrado sin merge), ahora con pruebas y una base más sólida.
+Estación DJ completa que corre 100% en el navegador (escritorio y móvil), con biblioteca local persistente, convertidor URL→MP3 real (yt-dlp + FFmpeg) y motor de audio Web Audio. Nada de mocks: cada control está conectado al motor.
 
-## Características
+## La cabina (pantalla principal)
 
-**Motor de audio (Web Audio API, un solo `AudioContext`)**
-- Dos decks independientes que suman a un bus master real: `source → EQ low/mid/high → volumen de canal → crossfader → master`.
-- Play / pausa / stop / seek / cue (marcar y saltar) sobre nodos reales.
-- EQ de 3 bandas por canal (−26 dB a +9 dB), volumen por canal, crossfader de potencia constante (−3 dB al centro), volumen master.
-- **Limitador master** bypassable (`DynamicsCompressorNode`, ratio 20:1) con medidor de reducción de ganancia.
+**Deck A / Deck B** (independientes, cada uno con):
+- Artwork real (carátula ID3 reducida), título, artista, **tonalidad** (análisis de cromas real) y género.
+- BPM grande (tag ID3 → estimación por autocorrelación → manual con ×2/½), duración, transcurrido y restante.
+- **Waveform real** desde los picos del PCM: reproducción sincronizada, búsqueda por clic/arrastre, **zoom 1×/4×/16×** centrado en el playhead, **beat grid** (marcadores por beat cuando hay BPM), cue principal y **8 hot cues** con color.
+- Play/pausa, stop, cue (saltar), set cue, **Sync** real (rechaza lo que salga del rango ±8%).
+- **Loops**: por beats cuantizados (½, 1, 2, 4, 8, 16) sobre la rejilla de BPM, y manuales In/Out/Salir (nativos `loopStart`/`loopEnd`).
+- **Hot cues 1–8** persistidos por pista: clic fija (vacío) o salta (lleno), Alt+clic / clic derecho borra; teclas 1–8 sobre el deck bajo el crossfader.
+- **Pitch acoplado** ±8% (tempo+tono), **jog**: nudge de tempo girando mientras suena, búsqueda al arrastrar en pausa; funciona con mouse y táctil.
+- **FX insert real**: Echo (sincronizado a ¾ de beat), Reverb (impulso sintetizado), Flanger y Phaser (LFOs reales) con monto. `reverse` y `beat repeat` aparecen deshabilitados con su razón exacta: requieren AudioWorklet.
 
-**Decks**
-- **Waveform** dibujada desde los picos del PCM decodificado; clic/arrastre para buscar; marcador de cue y región de loop.
-- Medidores de nivel por deck (con peak-hold) y espectro del bus master.
-- **BPM**: del tag ID3 (`TBPM`), si no, estimado por autocorrelación de envolvente de onsets; editable a mano y con ×2 / ½ para corregir octavas.
-- **Pitch y tempo acoplados** (fader ±8 %, estilo vinilo), **Sync** de tempo entre decks (rechaza lo que salga del rango de pitch), **loop nativo** (`loopStart`/`loopEnd`) con In/Out/Salir, y **jog**: nudge de tempo girando mientras suena, búsqueda al arrastrar en pausa.
-- Sin keylock, scratch, sync de fase ni cue de audífonos: esos controles no se muestran a propósito.
+**Mixer central** (entre ambos decks):
+- Por canal: **Trim (gain)**, High/Mid/Low (−26/+9 dB), **Filtro DJ** (LP↔HP real en un knob), Volumen, **CUE** (envío al bus de monitorización) y medidor de nivel con peak-hold.
+- Master: volumen, **limitador bypassable** con medidor de reducción de ganancia, espectro del bus, **CUE MIX** (mezcla master↔cue con ley de potencia constante) y **crossfader** de potencia constante (−3 dB al centro).
 
-**Biblioteca local**
-- Los bytes originales del archivo se guardan en **OPFS**; si el navegador no lo expone, respaldo automático en **IndexedDB**; último recurso, memoria (avisado con un toast).
-- Metadatos (título/artista/álbum/BPM/duración/picos) persistidos; una pista importada sigue disponible tras recargar.
-- **Playlists con orden real** (Subir/Bajar persiste), que sobreviven recargas.
-- La última pista seleccionada **no** se carga sola: solo con un clic explícito en `→ A` / `→ B`.
-- Archivos vacíos o que no son audio se rechazan con un error y no se guardan.
-- El ajuste del mezclador (volúmenes, EQ, crossfader, master, limitador, pitch) **se restaura** tras recargar y se conserva al cargar una pista en un deck.
+## Paneles (pestañas inferiores)
 
-## Atajos
+- **📚 Biblioteca**: búsqueda (título/artista/álbum/género), filtro ★ favoritas, orden (recientes/título/artista/BPM/duración), importar, **doble clic = previsualizar** (carga en un deck libre y reproduce), `→ A`/`→ B`, **＋ Cola**, playlists con orden real persistido y metadatos (título, artista, álbum, tonalidad, BPM, género, duración, artwork, fecha, origen, tamaño).
+- **⏭ Cola**: preparar la próxima mezcla — añadir desde la biblioteca, reordenar, quitar, "Reproducir siguiente" (al deck libre), auto-carga al terminar una pista (**auto-DJ**), vaciar y **guardar como playlist**.
+- **🥁 Sampler**: 6 pads con sonidos **sintetizados en vivo** (kick, snare, clap, hat, tom, zap — osciladores/ruido/envolventes Web Audio), pad iluminado mientras suena, volumen propio, teclas A S D F G H.
+- **⏺ Grabadora**: **grabación real del bus master** con MediaRecorder (sin micrófono: graba el stream interno post-limitador), iniciar/pausar/continuar/detener, cronómetro, nombrar y guardar la sesión, lista con reproducción integrada, descarga (webm/opus, mp4 u ogg según navegador) y borrado.
+- **🕘 Historial**: pistas reproducidas (deck, fecha, segundos), conversiones realizadas y sesiones grabadas — todo persistido (tope 300 eventos), con borrado.
+- **⤓ Convertidor**: URL → `POST /api/convert` → **yt-dlp + FFmpeg → MP3 192 kbps** → descarga real + "Añadir a la biblioteca" (entra al mismo pipeline de análisis que los archivos locales).
 
-| Tecla | Acción |
-| --- | --- |
-| `Q` | Play/Pausa Deck A |
-| `P` | Play/Pausa Deck B |
-| `Espacio` | Play/Pausa del deck debajo del crossfader |
+## Tema claro y oscuro
+
+Dos sistemas visuales completos sobre variables CSS: **oscuro** (cabina nocturna: negro/grafito/metal, alto contraste) y **claro** (plata/blanco, contraste limpio). El interruptor está en la barra superior y persiste. La lógica no cambia: solo el sistema visual.
+
+## Responsive y accesibilidad
+
+- Escritorio: decks + mixer central en fila, panel inferior con pestañas. Tablet: decks lado a lado, mixer abajo. Móvil (<780 px): todo apilado, mixer con canales lado a lado, jog más grande, objetivo táctil ≥44 px (`pointer: coarse`).
+- Teclado: `Q`/`P` play A/B, `Espacio` play del deck bajo el crossfader, `1–8` hot cues, `A S D F G H` sampler. Foco visible, `aria-label`/`aria-pressed`/`role=tablist`, estados disabled reales.
+
+## Convertidor URL → MP3 (flujo real, sin mocks)
+
+`POST /api/convert` con `{ "url": "…" }`: sondeo con yt-dlp, descarga del mejor audio, codificación FFmpeg `libmp3lame 192k`, respuesta `audio/mpeg` con `Content-Disposition`/`X-Track-Title`/`X-Track-Duration`. Errores en JSON `{ok:false, code, error, detail}` con el stderr real: `400` URL, `405` método, `500` FFmpeg, `502` descarga, `503` sin herramientas/ocupado (máx. 2), `504` timeout.
+
+### Herramientas y variables del servidor
+- `yt-dlp`: `pip install yt-dlp`. `ffmpeg`: del sistema o el binario estático de `@ffmpeg-installer/ffmpeg` (fallback automático).
+- `YT_DLP_PATH`, `FFMPEG_PATH`, `PORT` (opcionales). El frontend **no hardcodea URLs** (ruta relativa same-origin; middleware de Vite en dev/preview, `npm run start` en producción).
 
 ## Desarrollo
 
 ```bash
 npm install
-npm run dev        # servidor de desarrollo
-npm run typecheck  # tsc --noEmit
+npm run dev        # cabina en http://localhost:5173
+npm run typecheck  # tsc --noEmit (estricto)
 npm run lint       # eslint
-npm run test       # vitest (36 pruebas: formato, ID3, BPM/peaks, matemática de mezcla, biblioteca)
-npm run build      # typecheck + bundle de producción en dist/
+npm run test       # vitest — 58 pruebas
+npm run build      # typecheck + bundle en dist/
+npm run start      # producción: dist/ + /api/convert (PORT, default 8080)
 ```
 
 ## Arquitectura
@@ -50,48 +61,22 @@ npm run build      # typecheck + bundle de producción en dist/
 ```
 src/
   audio/
-    engine.ts     AudioContext único, master, limitador bypassable, medidores
-    deck.ts       Cadena de un deck + transporte (cue/loop/jog/pitch)
-    analysis.ts   Picos de PCM, mono, estimación de BPM (puro, testeable en Node)
-    crossfade.ts  Ley de potencia constante (puro)
-    rate.ts       BPM efectivo, syncRate, rango de pitch (puro)
-    settings.ts   Estado del mezclador y rangos de EQ
+    engine.ts     AudioContext único: master, limitador, bus de cue + CUE MIX, tap de grabación, sampler
+    deck.ts       Cadena completa por deck (EQ→trim→filtro→FX→vol→crossfader, cue send) + transporte
+    fx.ts         Módulos FX reales: echo/reverb/flanger/phaser (+ razón de los que requieren worklet)
+    sampler.ts    Síntesis en vivo de los 6 pads
+    recorder.ts   MediaRecorder del bus master (estados reales, MIME soportado)
+    key.ts        Tonalidad por cromas (DFT) + perfiles Krumhansl; beat grid y loops cuantizados (puro)
+    analysis.ts   Picos de PCM, mono, estimación de BPM (puro)
+    crossfade.ts  Ley de potencia constante (puro)   rate.ts  BPM efectivo/sync (puro)
+    settings.ts   Estado persistente del mezclador
   library/
-    storage.ts    OPFS → IndexedDB → memoria
-    library.ts    Pistas + playlists con orden persistido
-    fileValidate.ts  Rechazo barato de archivos vacíos / no-audio
-  ui/             Vistas (deck, mixer, biblioteca, waveform, toasts) y persistencia del mezclador
-  util/           Formato, parser ID3v2 (2.2/2.3/2.4)
-  main.ts         Orquestación: importación, carga a decks, render loop
-tests/            Vitest sobre los módulos puros (sin DOM ni Web Audio)
+    storage.ts    OPFS → IndexedDB → memoria   library.ts  Pistas, playlists, cola, favoritos,
+                  hot cues, historial y grabaciones (persistido)
+  ui/             Cabina: decks, mixer, waveform (zoom/grid/hot cues), biblioteca, cola, sampler,
+                  grabadora, historial, convertidor, tema claro/oscuro
+  server/ (server/) POST /api/convert real + servidor de producción
+tests/            58 pruebas vitest sobre módulos puros
 ```
 
-La lógica de audio-matemática y biblioteca vive en módulos puros para poder probarse en Node;
-todo lo que toca `AudioContext` o DOM queda en clases que solo se instancian en el navegador
-(el contexto se crea en el primer gesto del usuario, por la política de autoplay).
-
-## Convertidor URL → MP3 (flujo real, sin mocks)
-
-La interfaz hace `POST /api/convert` con `{ "url": "…" }`; el servidor sondea la URL con **yt-dlp**, descarga el mejor audio, lo codifica a **MP3 192 kbps** con **FFmpeg** y responde el binario `audio/mpeg`; el navegador inicia la descarga y deja un enlace manual.
-
-- Éxito: `200` con el MP3; cabeceras `Content-Disposition` (nombre sugerido), `X-Track-Title` y `X-Track-Duration`.
-- Tras convertir, el botón **"＋ Añadir a la biblioteca"** pasa el MP3 al mismo pipeline de importación de la app (decodificar → picos → BPM → OPFS): queda en la tabla de Biblioteca, listo para mandarlo a Deck A/B con `→ A` / `→ B`.
-- Error: JSON `{ "ok": false, "code": "…", "error": "…", "detail": "…" }` con el estado HTTP que corresponde: `400` URL vacía/inválida o no soportada, `405` método, `500` fallo de FFmpeg, `502` descarga/sondeo fallido (con el stderr real de yt-dlp), `503` sin herramientas u ocupado (máx. 2 conversiones simultáneas), `504` timeout.
-
-### Herramientas del servidor
-- `yt-dlp`: `pip install yt-dlp` (o el binario oficial).
-- `ffmpeg`: del sistema, o el binario estático de `@ffmpeg-installer/ffmpeg` (se usa automáticamente si no hay `ffmpeg` en el PATH; incluido en devDependencies).
-
-### Variables de entorno (opcionales)
-
-| Variable | Por defecto | Descripción |
-| --- | --- | --- |
-| `YT_DLP_PATH` | `yt-dlp` en el PATH | Ruta al binario yt-dlp |
-| `FFMPEG_PATH` | `ffmpeg` en PATH; si falta, `@ffmpeg-installer/ffmpeg` | Ruta al binario ffmpeg |
-| `PORT` | `8080` | Puerto de `npm run start` (producción) |
-
-El frontend **no hardcodea ninguna URL**: llama a `/api/convert` relativo al mismo origen. En `npm run dev` y `npm run preview` lo sirve el middleware de Vite (`server/convert-plugin.ts`); en producción, `npm run start` sirve `dist/` + el endpoint.
-
-## CI
-
-`.github/workflows/ci.yml` ejecuta en cada push y PR: `npm ci → typecheck → lint → test → build` sobre Node 22.
+CI: `.github/workflows/ci.yml` — `npm ci → typecheck → lint → test → build` en cada push/PR (Node 22).

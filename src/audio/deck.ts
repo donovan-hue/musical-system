@@ -1,5 +1,6 @@
 import type { DeckSettings, EqBand } from './settings.js';
 import { EQ_MAX_DB, EQ_MIN_DB } from './settings.js';
+import { createFxModule, type FxKind, type FxModule } from './fx.js';
 
 export type DeckId = 'A' | 'B';
 
@@ -9,11 +10,10 @@ export interface LoopRegion {
 }
 
 /**
- * One playback channel. Graph:
- *   source → eqLow → eqMid → eqHigh → channelGain → crossfadeGain → analyser → (engine master)
- *
- * The deck keeps its own transport state (position derives from the audio
- * clock, wrapped inside an active loop) and never touches other decks.
+ * Un canal de reproducción. Cadena completa:
+ *   source → eqLow → eqMid → eqHigh → trim → filterLP → filterHP → FX
+ *          → channelGain → crossfadeGain → analyser → (master)
+ *          └ channelGain → cueSend → (bus de monitorización)
  */
 export class Deck {
   readonly id: DeckId;
@@ -22,9 +22,18 @@ export class Deck {
   private readonly eqLow: BiquadFilterNode;
   private readonly eqMid: BiquadFilterNode;
   private readonly eqHigh: BiquadFilterNode;
+  private readonly trimGain: GainNode;
+  private readonly filterLP: BiquadFilterNode;
+  private readonly filterHP: BiquadFilterNode;
+  private readonly fxIn: GainNode;
+  private readonly fxOut: GainNode;
   private readonly channelGain: GainNode;
   private readonly crossfadeGain: GainNode;
+  readonly cueSendGain: GainNode;
   readonly analyser: AnalyserNode;
+
+  private fxModule: FxModule | null = null;
+  private fxAmount = 0;
 
   /** Sources stopped on purpose; their `onended` must not trigger natural-end logic. */
   private readonly stoppedIntents = new WeakSet<AudioBufferSourceNode>();
@@ -44,7 +53,7 @@ export class Deck {
 
   onEnded: (() => void) | null = null;
 
-  constructor(id: DeckId, ctx: AudioContext, destination: AudioNode) {
+  constructor(id: DeckId, ctx: AudioContext, destination: AudioNode, cueDestination: AudioNode) {
     this.id = id;
     this.ctx = ctx;
 
@@ -61,17 +70,42 @@ export class Deck {
     this.eqHigh.type = 'highshelf';
     this.eqHigh.frequency.value = 4000;
 
+    this.trimGain = ctx.createGain();
+    this.trimGain.gain.value = 1;
+
+    // Filtro DJ: LP+HP en serie, neutros al centro (20 kHz / 10 Hz).
+    this.filterLP = ctx.createBiquadFilter();
+    this.filterLP.type = 'lowpass';
+    this.filterLP.frequency.value = 20000;
+    this.filterLP.Q.value = 0.9;
+    this.filterHP = ctx.createBiquadFilter();
+    this.filterHP.type = 'highpass';
+    this.filterHP.frequency.value = 10;
+    this.filterHP.Q.value = 0.9;
+
+    this.fxIn = ctx.createGain();
+    this.fxOut = ctx.createGain();
+
     this.channelGain = ctx.createGain();
     this.crossfadeGain = ctx.createGain();
+    this.cueSendGain = ctx.createGain();
+    this.cueSendGain.gain.value = 0;
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 1024;
 
     this.eqLow.connect(this.eqMid);
     this.eqMid.connect(this.eqHigh);
-    this.eqHigh.connect(this.channelGain);
+    this.eqHigh.connect(this.trimGain);
+    this.trimGain.connect(this.filterLP);
+    this.filterLP.connect(this.filterHP);
+    this.filterHP.connect(this.fxIn);
+    this.fxIn.connect(this.fxOut); // dry (FX apagado)
+    this.fxOut.connect(this.channelGain);
     this.channelGain.connect(this.crossfadeGain);
     this.crossfadeGain.connect(this.analyser);
     this.analyser.connect(destination);
+    this.channelGain.connect(this.cueSendGain);
+    this.cueSendGain.connect(cueDestination);
   }
 
   // ---------- Loading ----------
@@ -188,7 +222,7 @@ export class Deck {
   // ---------- Loop ----------
 
   setLoop(region: LoopRegion | null): void {
-    if (region && region.end - region.start < 0.05) return; // Too short to be musical.
+    if (region && region.end - region.start < 0.02) return; // Demasiado corto.
     this.loop = region;
     const src = this.source;
     if (src) {
@@ -248,6 +282,75 @@ export class Deck {
     this.setNudge(1);
   }
 
+  // ---------- Canal: trim, filtro, FX, cue ----------
+
+  /** Ganancia de entrada del canal (0..2). */
+  setTrim(gain: number): void {
+    this.trimGain.gain.setTargetAtTime(Math.min(2, Math.max(0, gain)), this.ctx.currentTime, 0.02);
+  }
+
+  /** Filtro DJ: −1 = LP cerrado, 0 = neutral, +1 = HP cerrado. */
+  setFilter(position: number): void {
+    const p = Math.min(1, Math.max(-1, position));
+    const now = this.ctx.currentTime;
+    if (p < -0.01) {
+      // 20 kHz → 120 Hz exponencial.
+      const freq = 120 * Math.pow(20000 / 120, p + 1);
+      this.filterLP.frequency.setTargetAtTime(freq, now, 0.02);
+      this.filterHP.frequency.setTargetAtTime(10, now, 0.02);
+    } else if (p > 0.01) {
+      const freq = 10 * Math.pow(8000 / 10, p);
+      this.filterHP.frequency.setTargetAtTime(freq, now, 0.02);
+      this.filterLP.frequency.setTargetAtTime(20000, now, 0.02);
+    } else {
+      this.filterLP.frequency.setTargetAtTime(20000, now, 0.02);
+      this.filterHP.frequency.setTargetAtTime(10, now, 0.02);
+    }
+  }
+
+  /** Activa un FX real (o apaga el actual con null). */
+  setFx(kind: FxKind | null): void {
+    const now = this.ctx.currentTime;
+    if (this.fxModule) {
+      this.fxModule.setAmount(0);
+      const old = this.fxModule;
+      // Desconecta después de un instante para evitar clics.
+      window.setTimeout(() => old.dispose(), 120);
+      this.fxModule = null;
+    }
+    this.fxIn.disconnect();
+    this.fxIn.connect(this.fxOut); // dry por defecto
+    if (kind) {
+      this.fxModule = createFxModule(kind, this.ctx);
+      this.fxIn.disconnect();
+      this.fxIn.connect(this.fxModule.input);
+      this.fxModule.output.connect(this.fxOut);
+      this.fxModule.setAmount(this.fxAmount);
+      this.fxModule.setTime?.(0.375);
+    }
+    if (!this.fxModule) this.fxOut.gain.setTargetAtTime(1, now, 0.02);
+  }
+
+  /** Intensidad del FX activo (0..1). */
+  setFxAmount(amount: number): void {
+    this.fxAmount = Math.min(1, Math.max(0, amount));
+    this.fxModule?.setAmount(this.fxAmount);
+  }
+
+  /** Ajusta el tiempo del FX activo (echo sincronizado a BPM), en segundos. */
+  setFxTime(seconds: number): void {
+    this.fxModule?.setTime?.(seconds);
+  }
+
+  get activeFx(): FxKind | null {
+    return this.fxModule?.kind ?? null;
+  }
+
+  /** Envía (o retira) el canal al bus de monitorización (cue de auriculares). */
+  setCueSend(on: boolean): void {
+    this.cueSendGain.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.02);
+  }
+
   // ---------- Mixer side ----------
 
   setVolume(position: number): void {
@@ -275,7 +378,20 @@ export class Deck {
         high: this.eqHigh.gain.value,
       },
       pitch: this._rate,
+      trim: Math.min(2, Math.max(0, this.trimGain.gain.value)),
+      filter: this.captureFilterPosition(),
+      fx: this.fxModule ? { kind: this.fxModule.kind, amount: this.fxAmount } : null,
+      cueEnabled: this.cueSendGain.gain.value > 0.5,
     };
+  }
+
+  private captureFilterPosition(): number {
+    // Inversa aproximada del mapeo exponencial (para persistir la perilla).
+    const lp = this.filterLP.frequency.value;
+    if (lp < 19000) return Math.log(lp / 120) / Math.log(20000 / 120) - 1;
+    const hp = this.filterHP.frequency.value;
+    if (hp > 12) return Math.log(hp / 10) / Math.log(8000 / 10);
+    return 0;
   }
 
   applySettings(settings: DeckSettings): void {
@@ -284,6 +400,11 @@ export class Deck {
     this.setEq('mid', settings.eq.mid);
     this.setEq('high', settings.eq.high);
     this.setRate(settings.pitch);
+    this.setTrim(settings.trim ?? 1);
+    this.setFilter(settings.filter ?? 0);
+    this.setFx(settings.fx?.kind ?? null);
+    if (settings.fx) this.setFxAmount(settings.fx.amount);
+    this.setCueSend(settings.cueEnabled ?? false);
   }
 
   // ---------- Internals ----------

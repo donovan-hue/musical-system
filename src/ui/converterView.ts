@@ -6,7 +6,10 @@ type Toast = (message: string, kind?: 'info' | 'error' | 'ok') => void;
 
 export interface ConverterCallbacks {
   /** Guarda el MP3 convertido en la biblioteca local (pipeline real de importación). */
-  onAddToLibrary(blob: Blob, info: { fileName: string; title: string; durationSec: number | null }): Promise<void>;
+  onAddToLibrary(
+    blob: Blob,
+    info: { fileName: string; title: string; durationSec: number | null; sourceUrl: string },
+  ): Promise<void>;
 }
 
 /**
@@ -33,7 +36,7 @@ export class ConverterView {
   private currentObjectUrl: string | null = null;
   private readonly toast: Toast;
   private lastBlob: Blob | null = null;
-  private lastInfo: { fileName: string; title: string; durationSec: number | null } | null = null;
+  private lastInfo: { fileName: string; title: string; durationSec: number | null; sourceUrl: string } | null = null;
   private inLibrary = false;
 
   constructor(toast: Toast, cb: ConverterCallbacks) {
@@ -117,7 +120,12 @@ export class ConverterView {
     this.resultMeta.textContent =
       `${outcome.durationSec !== null ? `${formatTime(outcome.durationSec)} · ` : ''}${formatBytes(outcome.sizeBytes)}`;
     this.lastBlob = outcome.blob;
-    this.lastInfo = { fileName: outcome.fileName, title: outcome.title, durationSec: outcome.durationSec };
+    this.lastInfo = {
+      fileName: outcome.fileName,
+      title: outcome.title,
+      durationSec: outcome.durationSec,
+      sourceUrl: this.input.value.trim(),
+    };
     this.inLibrary = false;
     this.libraryBtn.disabled = false;
     this.libraryBtn.classList.remove('added');

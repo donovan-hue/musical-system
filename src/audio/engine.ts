@@ -2,13 +2,18 @@ import { crossfadeGains } from './crossfade.js';
 import { Deck, type DeckId } from './deck.js';
 import type { MixerState } from './settings.js';
 import { DEFAULT_MIXER_STATE } from './settings.js';
+import { Sampler } from './sampler.js';
 
 /**
- * Owns the single AudioContext, the two decks and the master chain:
- *   deckOut ×2 → masterIn → masterGain → [limiter] → masterAnalyser → destination
+ * Dueño del único AudioContext. Topología:
  *
- * The context is created lazily on the first user gesture (browser autoplay
- * policy), so nothing audio-related happens at page load.
+ *   deck.analyser ×2 ──► masterIn ──► masterGain ──► [limitador] ──► masterAnalyser
+ *                                                          │
+ * deck.channelGain ─► cueSend ─► cueBus ───────────────────┼──► masterOut ──► destination
+ *                                                          └──► recTap (MediaStream)
+ * sampler.bus ─────────────────────────────────────────────────► masterOut
+ *
+ * CUE MIX mezcla master vs bus de cue con ley de potencia constante.
  */
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -16,15 +21,20 @@ export class AudioEngine {
   private masterGain: GainNode | null = null;
   private limiter: DynamicsCompressorNode | null = null;
   private masterAnalyser: AnalyserNode | null = null;
-  private limiterWired = true;
+  private masterOut: GainNode | null = null;
+  private cueBus: GainNode | null = null;
+  private recTap: MediaStreamAudioDestinationNode | null = null;
+
+  private _sampler: Sampler | null = null;
 
   private _limiterEnabled = DEFAULT_MIXER_STATE.limiterEnabled;
   private _crossfader = DEFAULT_MIXER_STATE.crossfader;
+  private _cueMix = DEFAULT_MIXER_STATE.cueMix;
 
   private _deckA: Deck | null = null;
   private _deckB: Deck | null = null;
 
-  /** Create the context inside a user-gesture handler; safe to call repeatedly. */
+  /** Crea el contexto dentro de un gesto del usuario; seguro llamarlo varias veces. */
   ensure(): AudioContext {
     if (this.ctx) {
       if (this.ctx.state === 'suspended') void this.ctx.resume();
@@ -38,6 +48,9 @@ export class AudioEngine {
     this.masterAnalyser = ctx.createAnalyser();
     this.masterAnalyser.fftSize = 2048;
     this.masterAnalyser.smoothingTimeConstant = 0.75;
+    this.masterOut = ctx.createGain();
+    this.cueBus = ctx.createGain();
+    this.cueBus.gain.value = 0;
 
     this.limiter = ctx.createDynamicsCompressor();
     this.limiter.threshold.value = -6;
@@ -46,11 +59,19 @@ export class AudioEngine {
     this.limiter.attack.value = 0.003;
     this.limiter.release.value = 0.25;
 
-    this._deckA = new Deck('A', ctx, this.masterIn);
-    this._deckB = new Deck('B', ctx, this.masterIn);
+    try {
+      this.recTap = ctx.createMediaStreamDestination();
+    } catch {
+      this.recTap = null; // Navegador sin MediaStreamAudioDestinationNode.
+    }
+
+    this._deckA = new Deck('A', ctx, this.masterIn, this.cueBus);
+    this._deckB = new Deck('B', ctx, this.masterIn, this.cueBus);
+    this._sampler = new Sampler(ctx, this.masterOut);
 
     this.wireMaster();
     this.applyCrossfader(this._crossfader);
+    this.applyCueMix(this._cueMix);
     if (ctx.state === 'suspended') void ctx.resume();
     return ctx;
   }
@@ -65,6 +86,15 @@ export class AudioEngine {
     return this._deckB!;
   }
 
+  get sampler(): Sampler {
+    if (!this._sampler) this.ensure();
+    return this._sampler!;
+  }
+
+  deck(id: DeckId): Deck {
+    return id === 'A' ? this.deckA : this.deckB;
+  }
+
   /** True once the context exists (first user gesture happened). */
   get booted(): boolean {
     return this.ctx !== null;
@@ -75,15 +105,7 @@ export class AudioEngine {
     return id === 'A' ? this._deckA : this._deckB;
   }
 
-  deck(id: DeckId): Deck {
-    return id === 'A' ? this.deckA : this.deckB;
-  }
-
-  other(id: DeckId): Deck {
-    return id === 'A' ? this.deckB : this.deckA;
-  }
-
-  // ---------- Master side ----------
+  // ---------- Master ----------
 
   setMasterVolume(position: number): void {
     this.ensure();
@@ -123,6 +145,23 @@ export class AudioEngine {
     this._deckB?.setCrossfadeGain(b);
   }
 
+  /** 0 = solo master, 1 = solo canales marcados con CUE. */
+  get cueMix(): number {
+    return this._cueMix;
+  }
+
+  setCueMix(mix: number): void {
+    this.ensure();
+    this._cueMix = Math.min(1, Math.max(0, mix));
+    this.applyCueMix(this._cueMix);
+  }
+
+  private applyCueMix(mix: number): void {
+    const now = this.ctx?.currentTime ?? 0;
+    this.masterOut?.gain.setTargetAtTime(Math.cos((mix * Math.PI) / 2), now, 0.02);
+    this.cueBus?.gain.setTargetAtTime(Math.sin((mix * Math.PI) / 2), now, 0.02);
+  }
+
   /** Bypass = rewire the limiter out of the chain. */
   private wireMaster(): void {
     const ctx = this.ctx!;
@@ -130,6 +169,7 @@ export class AudioEngine {
     this.masterGain!.disconnect();
     this.limiter?.disconnect();
     this.masterAnalyser!.disconnect();
+    this.recTap?.disconnect();
 
     this.masterIn!.connect(this.masterGain!);
     if (this._limiterEnabled) {
@@ -138,8 +178,15 @@ export class AudioEngine {
     } else {
       this.masterGain!.connect(this.masterAnalyser!);
     }
-    this.masterAnalyser!.connect(ctx.destination);
-    this.limiterWired = this._limiterEnabled;
+    this.masterAnalyser!.connect(this.masterOut!);
+    this.masterOut!.connect(ctx.destination);
+    this.recTap?.connect(this.masterOut!); // la grabación escucha el bus post-límite
+  }
+
+  /** Stream real del bus master para MediaRecorder (null si el navegador no lo ofrece). */
+  get recordStream(): MediaStream | null {
+    this.ensure();
+    return this.recTap?.stream ?? null;
   }
 
   // ---------- Metering ----------
@@ -178,6 +225,7 @@ export class AudioEngine {
       master: Math.sqrt(Math.min(1, Math.max(0, this.masterGain!.gain.value))),
       limiterEnabled: this._limiterEnabled,
       crossfader: this._crossfader,
+      cueMix: this._cueMix,
       decks: {
         A: this.deckA.captureSettings(),
         B: this.deckB.captureSettings(),
@@ -192,12 +240,9 @@ export class AudioEngine {
     this.wireMaster();
     this.applyCrossfader(state.crossfader);
     this._crossfader = state.crossfader;
+    this.applyCueMix(state.cueMix ?? 0);
+    this._cueMix = state.cueMix ?? 0;
     this.deckA.applySettings(state.decks.A);
     this.deckB.applySettings(state.decks.B);
-  }
-
-  /** Test/introspection helper. */
-  get isLimiterInChain(): boolean {
-    return this.limiterWired;
   }
 }
