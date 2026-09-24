@@ -1,1 +1,32 @@
-# musical-system
+# MUSICAL SYSTEM
+
+Mezclador DJ de dos decks en el navegador. El sonido sale de un `AudioContext` real: cada deck decodifica el archivo elegido, crea un `AudioBufferSourceNode` y lo suma en el master.
+
+## Qué hace esta versión
+
+- Cargar un MP3 u otro audio que el navegador pueda decodificar, sin modificar el archivo.
+- Deck A y Deck B, la misma lógica: play, pausa, stop, seek, cue, volumen, tiempo y duración.
+- Los dos decks pueden sonar a la vez.
+- Crossfader de potencia constante, volumen master y EQ de tres bandas.
+- Errores visibles si el archivo está vacío, no es audio, no decodifica o el navegador bloquea el audio.
+
+## Qué todavía no hace
+
+Waveform, analizador, BPM, pitch/tempo, sync, loop, jog wheel, biblioteca persistente y cue por auriculares. Esos controles no están en la interfaz para no simularlos.
+
+## Uso
+
+```bash
+npm install
+npm run dev
+```
+
+Abre la app, pulsa **Activar audio** si el navegador lo pide, carga un archivo en cada deck y pulsa Play. No hay pistas incluidas.
+
+## Scripts
+
+- `npm run dev`
+- `npm run typecheck`
+- `npm run lint`
+- `npm run test`
+- `npm run build`
