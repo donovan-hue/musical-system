@@ -69,3 +69,24 @@ tests/            Vitest sobre los módulos puros (sin DOM ni Web Audio)
 La lógica de audio-matemática y biblioteca vive en módulos puros para poder probarse en Node;
 todo lo que toca `AudioContext` o DOM queda en clases que solo se instancian en el navegador
 (el contexto se crea en el primer gesto del usuario, por la política de autoplay).
+
+## Convertidor URL → MP3 (flujo real, sin mocks)
+
+La interfaz hace `POST /api/convert` con `{ "url": "…" }`; el servidor sondea la URL con **yt-dlp**, descarga el mejor audio, lo codifica a **MP3 192 kbps** con **FFmpeg** y responde el binario `audio/mpeg`; el navegador inicia la descarga y deja un enlace manual.
+
+- Éxito: `200` con el MP3; cabeceras `Content-Disposition` (nombre sugerido), `X-Track-Title` y `X-Track-Duration`.
+- Error: JSON `{ "ok": false, "code": "…", "error": "…", "detail": "…" }` con el estado HTTP que corresponde: `400` URL vacía/inválida o no soportada, `405` método, `500` fallo de FFmpeg, `502` descarga/sondeo fallido (con el stderr real de yt-dlp), `503` sin herramientas u ocupado (máx. 2 conversiones simultáneas), `504` timeout.
+
+### Herramientas del servidor
+- `yt-dlp`: `pip install yt-dlp` (o el binario oficial).
+- `ffmpeg`: del sistema, o el binario estático de `@ffmpeg-installer/ffmpeg` (se usa automáticamente si no hay `ffmpeg` en el PATH; incluido en devDependencies).
+
+### Variables de entorno (opcionales)
+
+| Variable | Por defecto | Descripción |
+| --- | --- | --- |
+| `YT_DLP_PATH` | `yt-dlp` en el PATH | Ruta al binario yt-dlp |
+| `FFMPEG_PATH` | `ffmpeg` en PATH; si falta, `@ffmpeg-installer/ffmpeg` | Ruta al binario ffmpeg |
+| `PORT` | `8080` | Puerto de `npm run start` (producción) |
+
+El frontend **no hardcodea ninguna URL**: llama a `/api/convert` relativo al mismo origen. En `npm run dev` y `npm run preview` lo sirve el middleware de Vite (`server/convert-plugin.ts`); en producción, `npm run start` sirve `dist/` + el endpoint.

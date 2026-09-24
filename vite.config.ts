@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite';
+import { convertApiPlugin } from './server/convert-plugin.ts';
 
 export default defineConfig({
   base: './',
+  plugins: [convertApiPlugin()],
   server: {
     host: true,
     port: 5173,

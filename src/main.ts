@@ -11,6 +11,7 @@ import { parseId3 } from './util/id3.js';
 import { DeckView } from './ui/deckView.js';
 import { MixerView } from './ui/mixerView.js';
 import { LibraryView } from './ui/libraryView.js';
+import { ConverterView } from './ui/converterView.js';
 import { showToast } from './ui/toast.js';
 import { loadMixerState, saveMixerState } from './ui/mixerStore.js';
 
@@ -198,7 +199,8 @@ async function main(): Promise<void> {
     B: new DeckView('B', '#f472b6', deckCallbacks('B')),
   };
 
-  layout.append(deckViews.A.el, mixerView.el, deckViews.B.el, libraryView.el);
+  const converterView = new ConverterView(toast);
+  layout.append(deckViews.A.el, mixerView.el, deckViews.B.el, libraryView.el, converterView.el);
   libraryView.setBackend(store.kind);
 
   // Restore persisted faders into the sliders immediately (no context yet —

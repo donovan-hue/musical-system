@@ -53,7 +53,8 @@ h3 { font-size: 0.8rem; margin: 0 0 6px; text-transform: uppercase; letter-spaci
 
 .deck,
 .mixer,
-.library {
+.library,
+.converter {
   background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -451,3 +452,59 @@ input[type='number'] { width: 70px; }
   .layout { grid-template-columns: 1fr; }
   .deck-bottom { flex-direction: column; align-items: center; }
 }
+
+/* ---------- Convertidor (URL → MP3) ---------- */
+
+.convert-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.convert-url {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-convert { flex: 0 0 auto; }
+.btn-convert:disabled { opacity: 0.6; }
+
+.convert-status {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.convert-error {
+  margin-top: 10px;
+  border: 1px solid #7f1d1d;
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.convert-error .detail {
+  display: block;
+  margin-top: 6px;
+  color: #fda4af;
+  font-size: 0.74rem;
+  opacity: 0.85;
+  font-family: ui-monospace, monospace;
+}
+
+.convert-result {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.convert-download { text-decoration: none; }
+.convert-meta { color: var(--muted); }

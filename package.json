@@ -9,10 +9,14 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "start": "node --experimental-strip-types server/prod-server.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "@types/node": "^26.6.2",
     "eslint": "^10.11.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.1",
