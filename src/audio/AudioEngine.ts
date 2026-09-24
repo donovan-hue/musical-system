@@ -13,12 +13,14 @@ export type EndedListener = (deckId: DeckId) => void
 /**
  * Single AudioContext.
  * Deck A and Deck B are two DeckChannel instances summed at the master gain.
- * Master connects only to context.destination.
+ * The master reaches the destination directly, or through a bypassable compressor.
  */
 export class AudioEngine {
   private context: AudioContext | null = null
   private masterGain: GainNode | null = null
   private masterAnalyser: AnalyserNode | null = null
+  private limiter: DynamicsCompressorNode | null = null
+  private limiterEnabled = true
   private readonly meterBuffer = new Float32Array(AUDIO.fftSize)
   private readonly spectrumBuffer = new Uint8Array(new ArrayBuffer(AUDIO.fftSize / 2))
   private readonly channels = new Map<DeckId, DeckChannel>()
@@ -244,6 +246,30 @@ export class AudioEngine {
     return this.masterVolume
   }
 
+  setLimiterEnabled(enabled: boolean): boolean {
+    this.limiterEnabled = enabled
+    this.routeMaster()
+    return this.limiterEnabled
+  }
+
+  getLimiterEnabled(): boolean {
+    return this.limiterEnabled
+  }
+
+  private routeMaster(): void {
+    if (!this.masterGain || !this.context || !this.masterAnalyser || !this.limiter) return
+    disconnectQuiet(this.masterGain)
+    disconnectQuiet(this.limiter)
+    if (this.limiterEnabled) {
+      this.masterGain.connect(this.limiter)
+      this.limiter.connect(this.context.destination)
+      this.limiter.connect(this.masterAnalyser)
+      return
+    }
+    this.masterGain.connect(this.context.destination)
+    this.masterGain.connect(this.masterAnalyser)
+  }
+
   private applyCrossfader(): void {
     const gains = crossfaderGains(this.crossfader)
     this.channels.get('A')?.setCrossfaderGain(gains.a)
@@ -268,14 +294,20 @@ export class AudioEngine {
     }
     const master = context.createGain()
     master.gain.value = this.masterVolume
+    const limiter = context.createDynamicsCompressor()
+    limiter.threshold.value = AUDIO.limiter.threshold
+    limiter.knee.value = AUDIO.limiter.knee
+    limiter.ratio.value = AUDIO.limiter.ratio
+    limiter.attack.value = AUDIO.limiter.attack
+    limiter.release.value = AUDIO.limiter.release
     const masterAnalyser = context.createAnalyser()
     masterAnalyser.fftSize = AUDIO.fftSize
     masterAnalyser.smoothingTimeConstant = AUDIO.analyserSmoothing
-    master.connect(context.destination)
-    master.connect(masterAnalyser)
     this.context = context
     this.masterGain = master
+    this.limiter = limiter
     this.masterAnalyser = masterAnalyser
+    this.routeMaster()
     const gains = crossfaderGains(this.crossfader)
     for (const id of ['A', 'B'] as const) {
       const deck = new DeckChannel(
@@ -289,6 +321,7 @@ export class AudioEngine {
       deck.setEq('low', this.eq[id].low)
       deck.setEq('mid', this.eq[id].mid)
       deck.setEq('high', this.eq[id].high)
+      deck.setNominalRate(this.rates[id])
       this.channels.set(id, deck)
     }
     context.onstatechange = () => {
@@ -296,5 +329,13 @@ export class AudioEngine {
     }
     this.contextListener?.(context.state)
     return context
+  }
+}
+
+function disconnectQuiet(node: AudioNode): void {
+  try {
+    node.disconnect()
+  } catch {
+    // Web Audio throws if the node has no outputs yet.
   }
 }

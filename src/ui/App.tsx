@@ -1,15 +1,18 @@
 import { useEffect } from 'react'
 import { engine } from '../audio/engine'
 import { pause, play, unlockAudio } from '../state/commands'
+import { toggleLibrary } from '../state/libraryCommands'
 import { store } from '../state/store'
 import { useAppSelector } from '../state/useStore'
 import { copy } from './copy'
 import { DeckPanel } from './DeckPanel'
+import { LibraryPanel } from './LibraryPanel'
 import { MixerSection } from './MixerSection'
 
 export function App() {
   const contextStatus = useAppSelector((state) => state.contextStatus)
   const contextError = useAppSelector((state) => state.contextError)
+  const libraryOpen = useAppSelector((state) => state.library.open)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -45,6 +48,15 @@ export function App() {
           </div>
         </div>
         <div className="audio-status">
+          <button
+            type="button"
+            className={libraryOpen ? 'is-on' : undefined}
+            aria-expanded={libraryOpen}
+            aria-controls="library-panel"
+            onClick={() => toggleLibrary()}
+          >
+            {copy.library.toggle}
+          </button>
           <p className="status-pill" role="status">
             <span className={contextStatus === 'running' ? 'led is-on' : 'led'} aria-hidden="true" />
             {copy.context[contextStatus]}
@@ -62,6 +74,7 @@ export function App() {
           {contextError}
         </p>
       ) : null}
+      <LibraryPanel />
       <main className="workspace">
         <div className="deck-grid">
           <DeckPanel deckId="A" />

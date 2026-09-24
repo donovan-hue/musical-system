@@ -8,6 +8,8 @@ import type { DeckId, EqBand } from '../audio/types'
 import { EngineError } from '../audio/types'
 import { validateAudioFile } from '../library/validateAudioFile'
 import { copy } from '../ui/copy'
+import { rememberDetectedBpm } from '../library/remember'
+import { holdSessionFile } from '../library/session'
 import { followSlaves } from './performance'
 import { store } from './store'
 import type { DeckState } from './types'
@@ -51,10 +53,20 @@ export function focusDeck(deckId: DeckId): void {
 
 export function selectFile(deckId: DeckId, file: File): void {
   unlockAudio()
-  void loadFile(deckId, file)
+  void loadFile(deckId, file, { sessionFile: file, libraryTrackId: null })
 }
 
-async function loadFile(deckId: DeckId, file: File): Promise<void> {
+export async function loadFile(
+  deckId: DeckId,
+  file: File,
+  options?: {
+    libraryTrackId?: string | null
+    displayName?: string
+    sessionFile?: File | null
+    bpmManual?: number | null
+    bpmDetected?: number | null
+  },
+): Promise<boolean> {
   const token = nextLoadToken(deckId)
   const previous = store.getState().decks[deckId]
   const pendingName = file.name.trim() || 'Archivo sin nombre'
@@ -66,32 +78,32 @@ async function loadFile(deckId: DeckId, file: File): Promise<void> {
 
   if (file.size <= 0) {
     restoreDeck(deckId, previous, copy.errors.empty)
-    return
+    return false
   }
   if (file.size > AUDIO.maxBytes) {
     restoreDeck(deckId, previous, copy.errors['too-large'])
-    return
+    return false
   }
 
   try {
     const headerBytes = await file.slice(0, AUDIO.headerBytes).arrayBuffer()
-    if (!isCurrentLoad(deckId, token)) return
+    if (!isCurrentLoad(deckId, token)) return false
     const header = new Uint8Array(headerBytes)
     const validation = validateAudioFile(file, header)
     if (!validation.ok) {
       restoreDeck(deckId, previous, copy.errors[validation.code])
-      return
+      return false
     }
     const bytes = await file.arrayBuffer()
-    if (!isCurrentLoad(deckId, token)) return
+    if (!isCurrentLoad(deckId, token)) return false
     const audioBuffer = await engine.decode(bytes)
-    if (!isCurrentLoad(deckId, token)) return
+    if (!isCurrentLoad(deckId, token)) return false
     engine.load(deckId, audioBuffer)
     const tagBpm = readId3Bpm(new Uint8Array(bytes))
     const mixed = mixAudioBuffer(audioBuffer)
     setDeckPeaks(deckId, computePeaks(mixed, AUDIO.waveformBuckets))
     store.patchDeck(deckId, {
-      trackName: pendingName,
+      trackName: options?.displayName || pendingName,
       playing: false,
       previewing: false,
       currentTime: 0,
@@ -101,18 +113,23 @@ async function loadFile(deckId: DeckId, file: File): Promise<void> {
       error: null,
       notice: null,
       bpmTag: tagBpm,
-      bpmDetected: null,
-      bpmManual: null,
+      bpmDetected: options?.bpmDetected ?? null,
+      bpmManual: options?.bpmManual ?? null,
       bpmStatus: 'running',
       loopIn: null,
       loopOut: null,
       loopEnabled: false,
       syncLock: false,
+      libraryTrackId: options?.libraryTrackId ?? null,
+      hasSessionFile: Boolean(options?.sessionFile),
     })
+    holdSessionFile(deckId, options?.sessionFile ?? null)
     scheduleBpm(deckId, token, mixed, audioBuffer.sampleRate)
+    return true
   } catch (error) {
-    if (!isCurrentLoad(deckId, token)) return
+    if (!isCurrentLoad(deckId, token)) return false
     restoreDeck(deckId, previous, messageFromEngine(error))
+    return false
   }
 }
 
@@ -125,6 +142,7 @@ function scheduleBpm(deckId: DeckId, token: number, mixed: Float32Array, sampleR
       bpmDetected: estimate?.bpm ?? null,
       bpmStatus: 'done',
     })
+    void rememberDetectedBpm(deckId, estimate?.bpm ?? null)
     if (store.getState().mixer.masterDeck === deckId) followSlaves(deckId)
     else if (store.getState().decks[deckId].syncLock) followSlaves(store.getState().mixer.masterDeck)
   }, 0)
@@ -259,6 +277,11 @@ export function setCrossfader(value: number): void {
 export function setMasterVolume(value: number): void {
   const masterVolume = engine.setMasterVolume(value)
   store.setMixer({ masterVolume })
+}
+
+export function setLimiter(enabled: boolean): void {
+  const limiterEnabled = engine.setLimiterEnabled(enabled)
+  store.setMixer({ limiterEnabled })
 }
 
 function watchResume(deckId: DeckId): void {

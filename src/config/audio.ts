@@ -25,4 +25,11 @@ export const AUDIO = {
   maxBend: 0.1,
   pitchRanges: [8, 16, 50],
   defaultPitchRange: 8,
+  limiter: {
+    threshold: -8,
+    knee: 6,
+    ratio: 8,
+    attack: 0.003,
+    release: 0.25,
+  },
 } as const

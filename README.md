@@ -12,11 +12,15 @@ Mezclador DJ de dos decks en el navegador. El sonido sale de un `AudioContext` r
 - BPM de etiqueta ID3, estimación por autocorrelación o entrada manual. Si no hay pulso claro, queda en "No detectado".
 - Pitch/tempo acoplados con `playbackRate`. Sync de tempo si ambos decks tienen BPM y el resultado cabe en el rango.
 - Loop real y jog: empuje de tempo en play, búsqueda en pausa.
-- Errores visibles si el archivo está vacío, no es audio, no decodifica o el navegador bloquea el audio.
+- Biblioteca local. El archivo se guarda como bytes originales: primero en el almacenamiento privado del navegador (OPFS) y, si eso falla, en IndexedDB. No se recomprime. El título, artista, álbum, género y BPM salen de la etiqueta o del audio; si no están, quedan vacíos.
+- Playlists con orden real: subir y bajar cambia el orden guardado. Borrar un archivo lo quita de las playlists.
+- Los ajustes del mezclador se restauran al abrir, sin crear el audio hasta que hay un gesto. La última selección solo se carga al pulsar "Cargar última selección".
+- Limitador real en el master: un `DynamicsCompressorNode` que se puede puentear.
+- Errores visibles si el archivo está vacío, no es audio, no decodifica, no cabe en el almacenamiento o el navegador bloquea el audio.
 
 ## Qué todavía no hace
 
-Keylock, scratch, sync de fase, biblioteca persistente y cue por auriculares. Esos controles no están en la interfaz para no simularlos.
+Keylock, scratch, sync de fase y cue por auriculares. Esos controles no están en la interfaz para no simularlos.
 
 ## Uso
 

@@ -1,4 +1,5 @@
 import type { DeckId, EqGains } from '../audio/types'
+import type { LibrarySort, LibraryTrack, Playlist, StorageKind } from '../library/types'
 
 export type Transport = 'empty' | 'loading' | 'ready' | 'playing' | 'error'
 
@@ -30,12 +31,30 @@ export type DeckState = {
   loopOut: number | null
   loopEnabled: boolean
   syncLock: boolean
+  libraryTrackId: string | null
+  hasSessionFile: boolean
 }
 
 export type MixerState = {
   crossfader: number
   masterVolume: number
   masterDeck: DeckId
+  limiterEnabled: boolean
+}
+
+export type LibrarySlice = {
+  open: boolean
+  status: 'loading' | 'ready' | 'unsupported'
+  error: string | null
+  notice: string | null
+  tracks: LibraryTrack[]
+  playlists: Playlist[]
+  query: string
+  sort: LibrarySort
+  sortDir: 'asc' | 'desc'
+  playlistId: string | null
+  storageKind: StorageKind | 'none'
+  lastTrackIds: Record<DeckId, string | null>
 }
 
 export type AppState = {
@@ -44,4 +63,5 @@ export type AppState = {
   focusedDeck: DeckId
   decks: Record<DeckId, DeckState>
   mixer: MixerState
+  library: LibrarySlice
 }

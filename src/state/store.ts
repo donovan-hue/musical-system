@@ -1,6 +1,6 @@
 import { AUDIO } from '../config/audio'
 import type { DeckId } from '../audio/types'
-import type { AppState, ContextStatus, DeckState, MixerState } from './types'
+import type { AppState, ContextStatus, DeckState, LibrarySlice, MixerState } from './types'
 
 function emptyDeck(): DeckState {
   return {
@@ -25,6 +25,8 @@ function emptyDeck(): DeckState {
     loopOut: null,
     loopEnabled: false,
     syncLock: false,
+    libraryTrackId: null,
+    hasSessionFile: false,
   }
 }
 
@@ -41,7 +43,26 @@ function createState(): AppState {
       crossfader: AUDIO.defaultCrossfader,
       masterVolume: AUDIO.defaultMasterVolume,
       masterDeck: 'A',
+      limiterEnabled: true,
     },
+    library: emptyLibrary(),
+  }
+}
+
+function emptyLibrary(): LibrarySlice {
+  return {
+    open: false,
+    status: 'loading',
+    error: null,
+    notice: null,
+    tracks: [],
+    playlists: [],
+    query: '',
+    sort: 'addedAt',
+    sortDir: 'desc',
+    playlistId: null,
+    storageKind: 'none',
+    lastTrackIds: { A: null, B: null },
   }
 }
 
@@ -99,6 +120,13 @@ export const store = {
   setFocused(focusedDeck: DeckId): void {
     if (state.focusedDeck === focusedDeck) return
     state = { ...state, focusedDeck }
+    emit()
+  },
+  patchLibrary(patch: Partial<LibrarySlice>): void {
+    state = {
+      ...state,
+      library: { ...state.library, ...patch },
+    }
     emit()
   },
 }

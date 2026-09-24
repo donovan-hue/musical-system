@@ -10,6 +10,7 @@ import {
   scaleBpm,
   syncRate,
 } from '../analysis/tempo'
+import { rememberManualBpm } from '../library/remember'
 import { copy } from '../ui/copy'
 import { store } from './store'
 import type { PitchRange } from './types'
@@ -98,16 +99,19 @@ export function setManualBpm(deckId: DeckId, value: number): void {
     store.patchDeck(deckId, { notice: copy.errors.bpmRange })
     return
   }
+  const bpmManual = Math.round(value * 10) / 10
   store.patchDeck(deckId, {
-    bpmManual: Math.round(value * 10) / 10,
+    bpmManual,
     notice: null,
   })
+  void rememberManualBpm(deckId, bpmManual)
   if (store.getState().mixer.masterDeck === deckId) followSlaves(deckId)
   else if (store.getState().decks[deckId].syncLock) syncDeck(deckId)
 }
 
 export function clearManualBpm(deckId: DeckId): void {
   store.patchDeck(deckId, { bpmManual: null, notice: null })
+  void rememberManualBpm(deckId, null)
   if (store.getState().mixer.masterDeck === deckId) followSlaves(deckId)
   else if (store.getState().decks[deckId].syncLock) syncDeck(deckId)
 }

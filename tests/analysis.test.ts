@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { detectBpm } from '../src/analysis/bpm'
-import { readId3Bpm } from '../src/analysis/id3Bpm'
+import { readId3Bpm, readId3Tags } from '../src/analysis/id3Bpm'
 import { logBands, meterFromRms } from '../src/analysis/levels'
 import { computePeaks, mixChannels } from '../src/analysis/peaks'
 import { fitsPitchRange, loopBoundsFromBeats, originBpm, pitchPercentFromRate, syncRate } from '../src/analysis/tempo'
@@ -96,11 +96,70 @@ describe('tempo math', () => {
   })
 })
 
+function id3Text(frames: { id: string; text: string; encoding?: 0 | 3 }[]): Uint8Array {
+  const encoded = frames.map((frame) => {
+    const body = frame.encoding === 3 ? new TextEncoder().encode(frame.text) : Uint8Array.from(frame.text, (char) => char.charCodeAt(0))
+    const size = 1 + body.length
+    const bytes = new Uint8Array(10 + size)
+    bytes.set([frame.id.charCodeAt(0), frame.id.charCodeAt(1), frame.id.charCodeAt(2), frame.id.charCodeAt(3)])
+    bytes[4] = (size >>> 24) & 0xff
+    bytes[5] = (size >>> 16) & 0xff
+    bytes[6] = (size >>> 8) & 0xff
+    bytes[7] = size & 0xff
+    bytes[10] = frame.encoding ?? 0
+    bytes.set(body, 11)
+    return bytes
+  })
+  const bodyLength = encoded.reduce((sum, frame) => sum + frame.length, 0)
+  const header = new Uint8Array(10)
+  header.set([0x49, 0x44, 0x33, 3, 0, 0])
+  header[6] = (bodyLength >>> 21) & 0x7f
+  header[7] = (bodyLength >>> 14) & 0x7f
+  header[8] = (bodyLength >>> 7) & 0x7f
+  header[9] = bodyLength & 0x7f
+  const out = new Uint8Array(10 + bodyLength)
+  out.set(header)
+  let offset = 10
+  for (const frame of encoded) {
+    out.set(frame, offset)
+    offset += frame.length
+  }
+  return out
+}
+
 describe('readId3Bpm', () => {
   it('reads a real TBPM frame and ignores a file without one', () => {
     expect(readId3Bpm(id3WithBpm('128'))).toBe(128)
     expect(readId3Bpm(Uint8Array.from([0x49, 0x44, 0x33]))).toBeNull()
     expect(readId3Bpm(Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))).toBeNull()
+  })
+})
+
+describe('readId3Tags', () => {
+  it('reads only the text frames that are present', () => {
+    const tags = readId3Tags(
+      id3Text([
+        { id: 'TIT2', text: 'Año', encoding: 3 },
+        { id: 'TPE1', text: 'Luna' },
+        { id: 'TALB', text: 'Noche' },
+        { id: 'TCON', text: 'Techno' },
+        { id: 'TBPM', text: '126' },
+      ]),
+    )
+    expect(tags).toEqual({
+      title: 'Año',
+      artist: 'Luna',
+      album: 'Noche',
+      genre: 'Techno',
+      bpm: 126,
+    })
+    expect(readId3Tags(id3Text([{ id: 'TIT2', text: 'Solo' }]))).toEqual({
+      title: 'Solo',
+      artist: null,
+      album: null,
+      genre: null,
+      bpm: null,
+    })
   })
 })
 

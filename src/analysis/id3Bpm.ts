@@ -24,15 +24,26 @@ function decodeFrameText(data: Uint8Array): string {
   return ''
 }
 
-/** Reads a TBPM tag when the file actually has one. Returns null otherwise. */
-export function readId3Bpm(bytes: Uint8Array): number | null {
-  if (bytes.length < 10) return null
-  if (bytes[0] !== 0x49 || bytes[1] !== 0x44 || bytes[2] !== 0x33) return null
+export type Id3Tags = {
+  title: string | null
+  artist: string | null
+  album: string | null
+  genre: string | null
+  bpm: number | null
+}
+
+const EMPTY_TAGS: Id3Tags = { title: null, artist: null, album: null, genre: null, bpm: null }
+
+/** Reads text frames that are actually present. Missing frames stay null. */
+export function readId3Tags(bytes: Uint8Array): Id3Tags {
+  if (bytes.length < 10) return { ...EMPTY_TAGS }
+  if (bytes[0] !== 0x49 || bytes[1] !== 0x44 || bytes[2] !== 0x33) return { ...EMPTY_TAGS }
   const version = bytes[3] ?? 0
   const flags = bytes[5] ?? 0
-  if (version !== 3 && version !== 4) return null
-  if ((flags & 0b1000_0000) !== 0 || (flags & 0b0100_0000) !== 0) return null
+  if (version !== 3 && version !== 4) return { ...EMPTY_TAGS }
+  if ((flags & 0b1000_0000) !== 0 || (flags & 0b0100_0000) !== 0) return { ...EMPTY_TAGS }
 
+  const tags: Id3Tags = { ...EMPTY_TAGS }
   const tagSize = syncsafe(bytes, 6)
   const tagEnd = Math.min(bytes.length, 10 + tagSize)
   let offset = 10
@@ -43,12 +54,20 @@ export function readId3Bpm(bytes: Uint8Array): number | null {
     const frameStart = offset + 10
     const frameEnd = frameStart + size
     if (size <= 0 || frameEnd > tagEnd) break
-    if (id === 'TBPM') {
-      return parseBpmText(decodeFrameText(bytes.subarray(frameStart, frameEnd)))
-    }
+    const text = decodeFrameText(bytes.subarray(frameStart, frameEnd)).trim()
+    if (id === 'TIT2' && text) tags.title = text
+    if (id === 'TPE1' && text) tags.artist = text
+    if (id === 'TALB' && text) tags.album = text
+    if (id === 'TCON' && text) tags.genre = text
+    if (id === 'TBPM') tags.bpm = parseBpmText(text)
     offset = frameEnd
   }
-  return null
+  return tags
+}
+
+/** Reads a TBPM tag when the file actually has one. Returns null otherwise. */
+export function readId3Bpm(bytes: Uint8Array): number | null {
+  return readId3Tags(bytes).bpm
 }
 
 function readU32(bytes: Uint8Array, offset: number): number {

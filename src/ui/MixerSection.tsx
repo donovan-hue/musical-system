@@ -1,6 +1,6 @@
 import { crossfaderGains } from '../audio/CrossfaderLaw'
 import type { DeckId } from '../audio/types'
-import { setCrossfader, setMasterVolume, unlockAudio } from '../state/commands'
+import { setCrossfader, setLimiter, setMasterVolume, unlockAudio } from '../state/commands'
 import { setMasterDeck } from '../state/performance'
 import { useAppSelector } from '../state/useStore'
 import { copy } from './copy'
@@ -14,6 +14,7 @@ export function MixerSection() {
   const playingA = useAppSelector((state) => state.decks.A.playing)
   const playingB = useAppSelector((state) => state.decks.B.playing)
   const masterDeck = useAppSelector((state) => state.mixer.masterDeck)
+  const limiterEnabled = useAppSelector((state) => state.mixer.limiterEnabled)
   const gains = crossfaderGains(crossfader)
 
   return (
@@ -68,6 +69,15 @@ export function MixerSection() {
             />
           </div>
           <p className="hint">{copy.masterHelp}</p>
+          <button
+            type="button"
+            className={limiterEnabled ? 'is-on' : undefined}
+            aria-pressed={limiterEnabled}
+            onClick={() => setLimiter(!limiterEnabled)}
+          >
+            {limiterEnabled ? copy.limiterOn : copy.limiterOff}
+          </button>
+          <p className="hint">{copy.limiterHelp}</p>
           <div className="chip-row" role="group" aria-label={copy.masterDeck}>
             {(['A', 'B'] as const).map((deckId: DeckId) => (
               <button

@@ -532,6 +532,87 @@ fieldset.loop-block {
   gap: 8px;
 }
 
+.library-panel {
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.library-panel[hidden] { display: none; }
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-well);
+  min-width: 0;
+}
+
+.library-actions,
+.library-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+
+.library-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 180px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.library-form input,
+.library-form select {
+  min-height: 48px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #090c10;
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.library-meta {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.library-subhead {
+  margin: 4px 0 0;
+  font-size: 1rem;
+}
+
+.track-flag {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--play);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 @media (max-width: 860px) {
   .deck-grid,
   .mixer-controls { grid-template-columns: 1fr; }
@@ -548,7 +629,8 @@ fieldset.loop-block {
   .app { padding-inline: 10px; }
   .transport-row { grid-template-columns: 1fr 1fr; }
   .track-row { flex-direction: column; }
-  .file-button { width: 100%; }
+  .file-button,
+  .library-actions button { width: 100%; }
   .waveform { height: 72px; }
 }
 

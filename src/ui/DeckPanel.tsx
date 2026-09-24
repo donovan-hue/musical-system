@@ -3,7 +3,8 @@ import type { DragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as Re
 import { AUDIO } from '../config/audio'
 import { engine } from '../audio/engine'
 import type { DeckId, EqBand } from '../audio/types'
-import { cueDown, cueUp, focusDeck, pause, play, seek, selectFile, setEq, setVolume, stop } from '../state/commands'
+import { cueDown, cueUp, focusDeck, pause, play, seek, selectFile, setEq, setVolume, stop, unlockAudio } from '../state/commands'
+import { saveDeckToLibrary, toggleLibrary } from '../state/libraryCommands'
 import { useAppSelector } from '../state/useStore'
 import type { DeckState } from '../state/types'
 import { BpmControl } from './BpmControl'
@@ -157,8 +158,22 @@ export function DeckPanel({ deckId }: { deckId: DeckId }) {
             }}
           />
         </label>
+        {deck.hasSessionFile ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              unlockAudio()
+              toggleLibrary(true)
+              void saveDeckToLibrary(deckId)
+            }}
+          >
+            {copy.library.saveDeck}
+          </button>
+        ) : null}
         <p className="track-name" title={deck.trackName ?? undefined}>
           {deck.trackName ?? copy.noTrack}
+          {deck.libraryTrackId ? <span className="track-flag">{copy.library.onDeck}</span> : null}
         </p>
       </div>
 

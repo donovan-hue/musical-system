@@ -1,4 +1,5 @@
 import { engine } from '../audio/engine'
+import { hydrateLibrary, watchLibrarySettings } from '../state/libraryCommands'
 import { store } from '../state/store'
 import { copy } from '../ui/copy'
 
@@ -33,5 +34,9 @@ export function wireEngine(): void {
       return
     }
     store.setContext(status, store.getState().contextError)
+  })
+
+  void hydrateLibrary().then(() => {
+    watchLibrarySettings()
   })
 }
