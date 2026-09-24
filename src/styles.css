@@ -508,3 +508,11 @@ input[type='number'] { width: 70px; }
 
 .convert-download { text-decoration: none; }
 .convert-meta { color: var(--muted); }
+
+.convert-to-library { flex: 0 0 auto; }
+.convert-to-library:disabled { opacity: 0.7; }
+.convert-to-library.added {
+  border-color: #1f5c48;
+  color: #86efac;
+  cursor: default;
+}

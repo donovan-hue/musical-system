@@ -4,6 +4,11 @@ import { requestConversion, startDownload } from './convertApi.js';
 
 type Toast = (message: string, kind?: 'info' | 'error' | 'ok') => void;
 
+export interface ConverterCallbacks {
+  /** Guarda el MP3 convertido en la biblioteca local (pipeline real de importación). */
+  onAddToLibrary(blob: Blob, info: { fileName: string; title: string; durationSec: number | null }): Promise<void>;
+}
+
 /**
  * Sección "Convertidor a MP3": URL → POST /api/convert → descarga real.
  * Reutiliza el lenguaje visual del panel de biblioteca (.lib-head, .btn…).
@@ -19,15 +24,21 @@ export class ConverterView {
   private readonly resultEl: HTMLElement;
   private readonly downloadLink: HTMLAnchorElement;
   private readonly resultMeta: HTMLElement;
+  private readonly libraryBtn: HTMLButtonElement;
+  private readonly cb: ConverterCallbacks;
 
   private busy = false;
   private timer = 0;
   private startedAt = 0;
   private currentObjectUrl: string | null = null;
   private readonly toast: Toast;
+  private lastBlob: Blob | null = null;
+  private lastInfo: { fileName: string; title: string; durationSec: number | null } | null = null;
+  private inLibrary = false;
 
-  constructor(toast: Toast) {
+  constructor(toast: Toast, cb: ConverterCallbacks) {
     this.toast = toast;
+    this.cb = cb;
     this.el = document.createElement('section');
     this.el.className = 'converter';
     this.el.innerHTML = `
@@ -44,6 +55,7 @@ export class ConverterView {
       <div class="convert-error" hidden></div>
       <div class="convert-result" hidden>
         <a class="btn convert-download" href="#" download>⤓ Descargar <span class="convert-filename"></span></a>
+        <button class="btn btn-mini convert-to-library" type="button">＋ Añadir a la biblioteca</button>
         <span class="convert-meta"></span>
       </div>
     `;
@@ -55,6 +67,8 @@ export class ConverterView {
     this.resultEl = this.el.querySelector('.convert-result') as HTMLElement;
     this.downloadLink = this.el.querySelector('.convert-download') as HTMLAnchorElement;
     this.resultMeta = this.el.querySelector('.convert-meta') as HTMLElement;
+    this.libraryBtn = this.el.querySelector('.convert-to-library') as HTMLButtonElement;
+    this.libraryBtn.addEventListener('click', () => void this.addToLibrary());
 
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -102,6 +116,12 @@ export class ConverterView {
     this.downloadLink.querySelector('.convert-filename')!.textContent = outcome.fileName;
     this.resultMeta.textContent =
       `${outcome.durationSec !== null ? `${formatTime(outcome.durationSec)} · ` : ''}${formatBytes(outcome.sizeBytes)}`;
+    this.lastBlob = outcome.blob;
+    this.lastInfo = { fileName: outcome.fileName, title: outcome.title, durationSec: outcome.durationSec };
+    this.inLibrary = false;
+    this.libraryBtn.disabled = false;
+    this.libraryBtn.classList.remove('added');
+    this.libraryBtn.textContent = '＋ Añadir a la biblioteca';
 
     let objectUrl: string | null = null;
     try {
@@ -115,6 +135,26 @@ export class ConverterView {
       this.downloadLink.href = objectUrl;
       this.downloadLink.download = outcome.fileName;
       this.toast(`"${outcome.title}" convertido (${formatBytes(outcome.sizeBytes)}) — descarga iniciada.`, 'ok');
+    }
+  }
+
+  /** Manda el MP3 convertido a la biblioteca local (misma vía que un archivo importado). */
+  private async addToLibrary(): Promise<void> {
+    if (!this.lastBlob || !this.lastInfo || this.inLibrary) return;
+    this.libraryBtn.disabled = true;
+    this.libraryBtn.textContent = '⏳ Añadiendo…';
+    try {
+      await this.cb.onAddToLibrary(this.lastBlob, this.lastInfo);
+      this.inLibrary = true;
+      this.libraryBtn.textContent = '✓ En la biblioteca';
+      this.libraryBtn.classList.add('added');
+    } catch (error) {
+      console.error(error);
+      this.libraryBtn.disabled = false;
+      this.libraryBtn.textContent = '＋ Añadir a la biblioteca';
+      const message = error instanceof Error ? error.message : String(error);
+      this.showError(`No se pudo añadir a la biblioteca: ${message}`);
+      this.toast('No se pudo añadir a la biblioteca.', 'error');
     }
   }
 
@@ -140,5 +180,9 @@ export class ConverterView {
     this.errorEl.hidden = true;
     this.errorEl.textContent = '';
     this.resultEl.hidden = true;
+    this.lastBlob = null;
+    this.lastInfo = null;
+    this.inLibrary = false;
+    this.libraryBtn.classList.remove('added');
   }
 }

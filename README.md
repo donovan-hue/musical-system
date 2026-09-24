@@ -75,6 +75,7 @@ todo lo que toca `AudioContext` o DOM queda en clases que solo se instancian en 
 La interfaz hace `POST /api/convert` con `{ "url": "…" }`; el servidor sondea la URL con **yt-dlp**, descarga el mejor audio, lo codifica a **MP3 192 kbps** con **FFmpeg** y responde el binario `audio/mpeg`; el navegador inicia la descarga y deja un enlace manual.
 
 - Éxito: `200` con el MP3; cabeceras `Content-Disposition` (nombre sugerido), `X-Track-Title` y `X-Track-Duration`.
+- Tras convertir, el botón **"＋ Añadir a la biblioteca"** pasa el MP3 al mismo pipeline de importación de la app (decodificar → picos → BPM → OPFS): queda en la tabla de Biblioteca, listo para mandarlo a Deck A/B con `→ A` / `→ B`.
 - Error: JSON `{ "ok": false, "code": "…", "error": "…", "detail": "…" }` con el estado HTTP que corresponde: `400` URL vacía/inválida o no soportada, `405` método, `500` fallo de FFmpeg, `502` descarga/sondeo fallido (con el stderr real de yt-dlp), `503` sin herramientas u ocupado (máx. 2 conversiones simultáneas), `504` timeout.
 
 ### Herramientas del servidor
@@ -90,3 +91,7 @@ La interfaz hace `POST /api/convert` con `{ "url": "…" }`; el servidor sondea 
 | `PORT` | `8080` | Puerto de `npm run start` (producción) |
 
 El frontend **no hardcodea ninguna URL**: llama a `/api/convert` relativo al mismo origen. En `npm run dev` y `npm run preview` lo sirve el middleware de Vite (`server/convert-plugin.ts`); en producción, `npm run start` sirve `dist/` + el endpoint.
+
+## CI
+
+`.github/workflows/ci.yml` ejecuta en cada push y PR: `npm ci → typecheck → lint → test → build` sobre Node 22.

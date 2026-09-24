@@ -199,7 +199,15 @@ async function main(): Promise<void> {
     B: new DeckView('B', '#f472b6', deckCallbacks('B')),
   };
 
-  const converterView = new ConverterView(toast);
+  const converterView = new ConverterView(toast, {
+    onAddToLibrary: async (blob, info) => {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (bytes.length === 0) throw new Error('El MP3 convertido está vacío.');
+      const meta = await importAudioBytes(info.fileName, bytes);
+      refreshLibrary();
+      toast(`"${meta.title}" añadida a la biblioteca${meta.bpm ? ` · ${meta.bpm.toFixed(1)} BPM` : ''}.`, 'ok');
+    },
+  });
   layout.append(deckViews.A.el, mixerView.el, deckViews.B.el, libraryView.el, converterView.el);
   libraryView.setBackend(store.kind);
 
@@ -213,6 +221,36 @@ async function main(): Promise<void> {
   mixerView.setFaders(restored.master, restored.crossfader, restored.limiterEnabled);
 
   // ---------- Library actions ----------
+  /**
+   * Pipeline de importación compartido: decodifica, calcula picos y BPM,
+   * lee tags y guarda bytes + metadatos en la biblioteca (OPFS).
+   * Lo usan tanto los archivos locales como el MP3 del convertidor.
+   */
+  async function importAudioBytes(fileName: string, bytes: Uint8Array): Promise<TrackMeta> {
+    const ctx = ensureEngine();
+    const buffer = await decodeAudioBytes(ctx, bytes.buffer as ArrayBuffer);
+    if (!buffer) throw new Error(`No se pudo decodificar "${fileName}".`);
+    const mono = toMono((i) => buffer.getChannelData(i), buffer.numberOfChannels, buffer.length);
+    const peaks = Array.from(computePeaks(mono, PEAK_BUCKETS));
+    const tags = parseId3(bytes);
+    const bpm = tags.bpm ? tags.bpm : estimateBpm(mono, buffer.sampleRate);
+    const bpmSource: DeckBpmSource = tags.bpm ? 'tag' : 'estimated';
+    return library.addTrack(
+      {
+        fileName,
+        title: tags.title || stripExtension(fileName),
+        artist: tags.artist || 'Desconocido',
+        album: tags.album ?? '',
+        bpm,
+        bpmSource,
+        durationSec: buffer.duration,
+        sizeBytes: bytes.byteLength,
+        peaks,
+      },
+      bytes,
+    );
+  }
+
   async function importFiles(files: File[]): Promise<void> {
     for (const file of files) {
       const verdict = validateAudioFile(file.name, file.size, file.type);
@@ -226,32 +264,7 @@ async function main(): Promise<void> {
           toast(`"${file.name}" está vacío.`, 'error');
           continue;
         }
-        const ctx = ensureEngine();
-        const buffer = await decodeAudioBytes(ctx, bytes.buffer as ArrayBuffer);
-        if (!buffer) {
-          toast(`No se pudo decodificar "${file.name}".`, 'error');
-          continue;
-        }
-        const mono = toMono((i) => buffer.getChannelData(i), buffer.numberOfChannels, buffer.length);
-        const peaks = Array.from(computePeaks(mono, PEAK_BUCKETS));
-        const tags = parseId3(bytes);
-        const bpm = tags.bpm ? tags.bpm : estimateBpm(mono, buffer.sampleRate);
-        const bpmSource: DeckBpmSource = tags.bpm ? 'tag' : 'estimated';
-
-        const meta = await library.addTrack(
-          {
-            fileName: file.name,
-            title: tags.title || stripExtension(file.name),
-            artist: tags.artist || 'Desconocido',
-            album: tags.album ?? '',
-            bpm,
-            bpmSource,
-            durationSec: buffer.duration,
-            sizeBytes: file.size,
-            peaks,
-          },
-          bytes,
-        );
+        const meta = await importAudioBytes(file.name, bytes);
         toast(`"${meta.title}" importada${meta.bpm ? ` · ${meta.bpm.toFixed(1)} BPM` : ''}.`, 'ok');
         refreshLibrary();
       } catch (error) {
