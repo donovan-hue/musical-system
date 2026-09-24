@@ -30,6 +30,25 @@ describe('PositionClock', () => {
     expect(clock.getPosition(11)).toBeCloseTo(14)
   })
 
+  it('changes buffer speed when the rate changes and keeps the position continuous', () => {
+    const clock = new PositionClock()
+    clock.setDuration(100)
+    clock.play(0, 0)
+    expect(clock.getPosition(2)).toBeCloseTo(2)
+    clock.setRate(2, 2)
+    expect(clock.getPosition(2)).toBeCloseTo(2)
+    expect(clock.getPosition(3)).toBeCloseTo(4)
+  })
+
+  it('wraps inside an enabled loop using buffer time', () => {
+    const clock = new PositionClock()
+    clock.setDuration(30)
+    clock.setLoop({ enabled: true, inSec: 10, outSec: 12 })
+    clock.play(0, 10)
+    expect(clock.getPosition(1)).toBeCloseTo(11)
+    expect(clock.getPosition(3)).toBeCloseTo(11)
+  })
+
   it('clamps to the decoded duration', () => {
     const clock = new PositionClock()
     clock.setDuration(30)

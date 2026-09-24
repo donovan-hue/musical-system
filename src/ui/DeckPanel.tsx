@@ -6,8 +6,14 @@ import type { DeckId, EqBand } from '../audio/types'
 import { cueDown, cueUp, focusDeck, pause, play, seek, selectFile, setEq, setVolume, stop } from '../state/commands'
 import { useAppSelector } from '../state/useStore'
 import type { DeckState } from '../state/types'
+import { BpmControl } from './BpmControl'
 import { copy } from './copy'
 import { formatDb, formatPercent, formatTime } from './formatTime'
+import { JogWheel } from './JogWheel'
+import { LoopControl } from './LoopControl'
+import { Meter } from './Meter'
+import { PitchControl } from './PitchControl'
+import { Waveform } from './Waveform'
 
 const EQ_BANDS: { band: EqBand; label: string }[] = [
   { band: 'low', label: 'Graves' },
@@ -161,6 +167,13 @@ export function DeckPanel({ deckId }: { deckId: DeckId }) {
           {deck.error}
         </p>
       ) : null}
+      {deck.notice ? (
+        <p className="deck-error" role="status">
+          {deck.notice}
+        </p>
+      ) : null}
+
+      <Waveform deckId={deckId} />
 
       <div className="time-well">
         <span ref={timeRef} className="time-current" />
@@ -244,7 +257,16 @@ export function DeckPanel({ deckId }: { deckId: DeckId }) {
         Cue {deck.cueTime === null ? '—' : formatTime(deck.cueTime)}
       </p>
 
-      <label className="slider-field">
+      <div className="performance-grid">
+        <JogWheel deckId={deckId} disabled={!loaded} />
+        <PitchControl deckId={deckId} />
+      </div>
+      <BpmControl deckId={deckId} />
+      <LoopControl deckId={deckId} />
+
+      <div className="volume-row">
+        <Meter deckId={deckId} label={`Nivel pre-fader del deck ${deckId}`} />
+        <label className="slider-field">
         <span className="control-head">
           <span>{copy.volume}</span>
           <span className="readout">{formatPercent(deck.volume)}</span>
@@ -261,6 +283,7 @@ export function DeckPanel({ deckId }: { deckId: DeckId }) {
           onChange={(event) => setVolume(deckId, Number(event.currentTarget.value))}
         />
       </label>
+      </div>
 
       <fieldset className="eq">
         <legend>{copy.eq}</legend>

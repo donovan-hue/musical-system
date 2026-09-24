@@ -1,9 +1,14 @@
 import { AUDIO } from '../config/audio'
+import { detectBpm } from '../analysis/bpm'
+import { readId3Bpm } from '../analysis/id3Bpm'
+import { computePeaks, mixAudioBuffer } from '../analysis/peaks'
+import { setDeckPeaks } from '../analysis/peaksCache'
 import { engine } from '../audio/engine'
 import type { DeckId, EqBand } from '../audio/types'
 import { EngineError } from '../audio/types'
 import { validateAudioFile } from '../library/validateAudioFile'
 import { copy } from '../ui/copy'
+import { followSlaves } from './performance'
 import { store } from './store'
 import type { DeckState } from './types'
 
@@ -82,6 +87,9 @@ async function loadFile(deckId: DeckId, file: File): Promise<void> {
     const audioBuffer = await engine.decode(bytes)
     if (!isCurrentLoad(deckId, token)) return
     engine.load(deckId, audioBuffer)
+    const tagBpm = readId3Bpm(new Uint8Array(bytes))
+    const mixed = mixAudioBuffer(audioBuffer)
+    setDeckPeaks(deckId, computePeaks(mixed, AUDIO.waveformBuckets))
     store.patchDeck(deckId, {
       trackName: pendingName,
       playing: false,
@@ -91,11 +99,35 @@ async function loadFile(deckId: DeckId, file: File): Promise<void> {
       cueTime: 0,
       transport: 'ready',
       error: null,
+      notice: null,
+      bpmTag: tagBpm,
+      bpmDetected: null,
+      bpmManual: null,
+      bpmStatus: 'running',
+      loopIn: null,
+      loopOut: null,
+      loopEnabled: false,
+      syncLock: false,
     })
+    scheduleBpm(deckId, token, mixed, audioBuffer.sampleRate)
   } catch (error) {
     if (!isCurrentLoad(deckId, token)) return
     restoreDeck(deckId, previous, messageFromEngine(error))
   }
+}
+
+function scheduleBpm(deckId: DeckId, token: number, mixed: Float32Array, sampleRate: number): void {
+  setTimeout(() => {
+    if (!isCurrentLoad(deckId, token)) return
+    const estimate = detectBpm(mixed, sampleRate)
+    if (!isCurrentLoad(deckId, token)) return
+    store.patchDeck(deckId, {
+      bpmDetected: estimate?.bpm ?? null,
+      bpmStatus: 'done',
+    })
+    if (store.getState().mixer.masterDeck === deckId) followSlaves(deckId)
+    else if (store.getState().decks[deckId].syncLock) followSlaves(store.getState().mixer.masterDeck)
+  }, 0)
 }
 
 function restoreDeck(deckId: DeckId, previous: DeckState, message: string): void {

@@ -13,7 +13,18 @@ function emptyDeck(): DeckState {
     eq: { low: 0, mid: 0, high: 0 },
     transport: 'empty',
     error: null,
+    notice: null,
     previewing: false,
+    pitchPercent: 0,
+    pitchRange: AUDIO.defaultPitchRange,
+    bpmTag: null,
+    bpmDetected: null,
+    bpmManual: null,
+    bpmStatus: 'idle',
+    loopIn: null,
+    loopOut: null,
+    loopEnabled: false,
+    syncLock: false,
   }
 }
 
@@ -29,6 +40,7 @@ function createState(): AppState {
     mixer: {
       crossfader: AUDIO.defaultCrossfader,
       masterVolume: AUDIO.defaultMasterVolume,
+      masterDeck: 'A',
     },
   }
 }

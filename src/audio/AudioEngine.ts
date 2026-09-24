@@ -2,6 +2,7 @@ import { AUDIO } from '../config/audio'
 import { clamp, clamp01 } from '../util/clamp'
 import { crossfaderGains } from './CrossfaderLaw'
 import { DeckChannel } from './DeckChannel'
+import { meterFromRms, rms } from '../analysis/levels'
 import { approach } from './ramp'
 import type { CueAction, DeckId, EqBand, EqGains } from './types'
 import { EngineError } from './types'
@@ -17,6 +18,9 @@ export type EndedListener = (deckId: DeckId) => void
 export class AudioEngine {
   private context: AudioContext | null = null
   private masterGain: GainNode | null = null
+  private masterAnalyser: AnalyserNode | null = null
+  private readonly meterBuffer = new Float32Array(AUDIO.fftSize)
+  private readonly spectrumBuffer = new Uint8Array(new ArrayBuffer(AUDIO.fftSize / 2))
   private readonly channels = new Map<DeckId, DeckChannel>()
   private masterVolume: number = AUDIO.defaultMasterVolume
   private crossfader: number = AUDIO.defaultCrossfader
@@ -28,6 +32,7 @@ export class AudioEngine {
     A: { low: 0, mid: 0, high: 0 },
     B: { low: 0, mid: 0, high: 0 },
   }
+  private readonly rates: Record<DeckId, number> = { A: 1, B: 1 }
   private contextListener: ContextListener | null = null
   private endedListener: EndedListener | null = null
 
@@ -160,6 +165,73 @@ export class AudioEngine {
     return this.crossfader
   }
 
+  setRate(deckId: DeckId, rate: number): number {
+    const next = clamp(rate, AUDIO.minRate, AUDIO.maxRate)
+    this.rates[deckId] = next
+    this.channels.get(deckId)?.setNominalRate(next)
+    return this.channels.get(deckId)?.getNominalRate() ?? next
+  }
+
+  getNominalRate(deckId: DeckId): number {
+    return this.channels.get(deckId)?.getNominalRate() ?? this.rates[deckId]
+  }
+
+  getRate(deckId: DeckId): number {
+    return this.channels.get(deckId)?.getRate() ?? this.rates[deckId]
+  }
+
+  setBend(deckId: DeckId, amount: number): void {
+    this.channel(deckId).setBend(amount)
+  }
+
+  releaseBend(deckId: DeckId): void {
+    this.channels.get(deckId)?.releaseBend()
+  }
+
+  setLoopIn(deckId: DeckId): number {
+    return this.channel(deckId).setLoopIn(this.getPosition(deckId))
+  }
+
+  setLoopOut(deckId: DeckId): number {
+    return this.channel(deckId).setLoopOut(this.getPosition(deckId))
+  }
+
+  setLoopRegion(deckId: DeckId, inSec: number, outSec: number, enabled: boolean): void {
+    this.channel(deckId).setLoopRegion(inSec, outSec, enabled)
+  }
+
+  setLoopEnabled(deckId: DeckId, enabled: boolean): boolean {
+    return this.channel(deckId).setLoopEnabled(enabled)
+  }
+
+  clearLoop(deckId: DeckId): void {
+    this.channels.get(deckId)?.clearLoop()
+  }
+
+  getLoop(deckId: DeckId): { inSec: number | null; outSec: number | null; enabled: boolean } {
+    return this.channels.get(deckId)?.getLoop() ?? { inSec: null, outSec: null, enabled: false }
+  }
+
+  readMeter(deckId: DeckId): number | null {
+    const analyser = this.channels.get(deckId)?.getAnalyser()
+    if (!analyser) return null
+    analyser.getFloatTimeDomainData(this.meterBuffer)
+    return meterFromRms(rms(this.meterBuffer))
+  }
+
+  readMasterMeter(): number | null {
+    if (!this.masterAnalyser) return null
+    this.masterAnalyser.getFloatTimeDomainData(this.meterBuffer)
+    return meterFromRms(rms(this.meterBuffer))
+  }
+
+  fillMasterSpectrum(target: Uint8Array): boolean {
+    if (!this.masterAnalyser) return false
+    this.masterAnalyser.getByteFrequencyData(this.spectrumBuffer)
+    target.set(this.spectrumBuffer.subarray(0, Math.min(target.length, this.spectrumBuffer.length)))
+    return true
+  }
+
   setMasterVolume(value: number): number {
     this.masterVolume = clamp01(value)
     if (this.masterGain && this.context) {
@@ -196,9 +268,14 @@ export class AudioEngine {
     }
     const master = context.createGain()
     master.gain.value = this.masterVolume
+    const masterAnalyser = context.createAnalyser()
+    masterAnalyser.fftSize = AUDIO.fftSize
+    masterAnalyser.smoothingTimeConstant = AUDIO.analyserSmoothing
     master.connect(context.destination)
+    master.connect(masterAnalyser)
     this.context = context
     this.masterGain = master
+    this.masterAnalyser = masterAnalyser
     const gains = crossfaderGains(this.crossfader)
     for (const id of ['A', 'B'] as const) {
       const deck = new DeckChannel(

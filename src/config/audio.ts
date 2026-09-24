@@ -16,4 +16,13 @@ export const AUDIO = {
   cueToleranceSec: 0.05,
   endRestartSec: 0.01,
   seekThrottleMs: 70,
+  fftSize: 2048,
+  analyserSmoothing: 0.75,
+  waveformBuckets: 900,
+  spectrumBars: 32,
+  minRate: 0.5,
+  maxRate: 1.5,
+  maxBend: 0.1,
+  pitchRanges: [8, 16, 50],
+  defaultPitchRange: 8,
 } as const

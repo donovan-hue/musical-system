@@ -12,6 +12,11 @@ export function formatTime(seconds: number): string {
   return `${mins}:${ss}.${tenths}`
 }
 
+export function formatBpm(value: number): string {
+  if (!Number.isFinite(value)) return '—'
+  return (Math.round(value * 10) / 10).toFixed(1)
+}
+
 export function formatPercent(value: number): string {
   if (!Number.isFinite(value)) return '0%'
   return `${Math.round(value * 100)}%`
