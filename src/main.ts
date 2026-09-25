@@ -600,7 +600,7 @@ async function main(): Promise<void> {
       return;
     }
     const { playlist } = result;
-    const created = await library.createPlaylist(playlist.name);
+    const created = await library.createPlaylist(playlist.name, playlist.coverUrl ?? undefined);
     importQueue.begin(playlist.tracks.map((t) => `${t.artists} — ${t.title}`));
     switchTab('lotes');
     for (const t of playlist.tracks) {

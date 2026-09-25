@@ -722,3 +722,12 @@ ul.smart-list li.active { background: rgba(167, 139, 250, 0.18); color: var(--te
 @media (max-width: 720px) {
   table.tracks td.td-analysis, table.tracks td.td-genre { display: none; }
 }
+
+.playlist-cover {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  flex: 0 0 auto;
+}

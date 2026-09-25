@@ -284,6 +284,17 @@ describe('biblioteca: referencias, dedup y portabilidad', () => {
     expect(other.getTrack(t.id)).not.toBeNull();
   });
 
+  it('createPlaylist guarda la portada (Spotify) y sobrevive a un reload', async () => {
+    const store = new MemoryStore();
+    const l = new Library(store);
+    await l.init();
+    const created = await l.createPlaylist('Mi sesión', 'https://example.com/cover.jpg');
+    expect(created.coverUrl).toBe('https://example.com/cover.jpg');
+    const reloaded = new Library(store);
+    await reloaded.init();
+    expect(reloaded.playlists[0]?.coverUrl).toBe('https://example.com/cover.jpg');
+  });
+
   it('updateMetadata guarda etiquetas y campos editables', async () => {
     const l = await lib();
     const t = await l.addTrack(

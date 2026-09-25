@@ -54,6 +54,8 @@ export interface Playlist {
   id: string;
   name: string;
   trackIds: string[];
+  /** Portada de la playlist (URL real, p. ej. la de Spotify). */
+  coverUrl?: string;
 }
 
 export type HistoryEvent =
@@ -398,8 +400,8 @@ export class Library {
 
   // ---------- Playlists ----------
 
-  async createPlaylist(name: string): Promise<Playlist> {
-    const playlist: Playlist = { id: newId(), name, trackIds: [] };
+  async createPlaylist(name: string, coverUrl?: string): Promise<Playlist> {
+    const playlist: Playlist = { id: newId(), name, trackIds: [], coverUrl: coverUrl || undefined };
     this.data.playlists = [...this.data.playlists, playlist];
     await this.persist();
     return playlist;

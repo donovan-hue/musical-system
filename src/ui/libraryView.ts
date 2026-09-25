@@ -203,6 +203,7 @@ export class LibraryView {
           <ul class="playlist-list"></ul>
           <div class="playlist-detail">
             <div class="playlist-detail-head">
+              <img class="playlist-cover" hidden alt="">
               <span class="playlist-title">Sin playlist</span>
               <button class="btn btn-mini playlist-add" disabled title="Añadir las pistas elegidas">＋ Añadir</button>
               <button class="btn btn-mini playlist-delete" disabled>🗑</button>
@@ -547,7 +548,7 @@ export class LibraryView {
         const titleB = el('b', '', track.hasAudio ? track.title : `${track.title} · (pendiente de audio)`);
         titleTd.appendChild(titleB);
         titleTd.appendChild(el('small', 'td-artist', track.artist));
-        titleTd.title = `${track.fileName}${track.album ? ` · ${track.album}` : ''}${track.date ? ` · ${track.date}` : ''}${track.trackNumber ? ` · pista ${track.trackNumber}` : ''}`;
+        titleTd.title = `${track.fileName}${track.album ? ` · ${track.album}` : ''}${track.date ? ` · ${track.date}` : ''}${track.trackNumber ? ` · pista ${track.trackNumber}` : ''} · importada ${track.addedAt.slice(0, 10)} · id ${track.id}`;
       }
       row.appendChild(titleTd);
 
@@ -701,6 +702,14 @@ export class LibraryView {
     const active = this.playlists.find((p) => p.id === this.activePlaylistId) ?? null;
     const activeSmart = this.smartPlaylists.find((p) => p.id === this.activeSmartId) ?? null;
     this.playlistTitle.textContent = active ? active.name : activeSmart ? `🪄 ${activeSmart.name}` : 'Sin playlist';
+    const cover = this.el.querySelector('.playlist-cover') as HTMLImageElement;
+    if (active?.coverUrl) {
+      cover.src = active.coverUrl;
+      cover.hidden = false;
+    } else {
+      cover.hidden = true;
+      cover.removeAttribute('src');
+    }
     const addBtn = this.el.querySelector('.playlist-add') as HTMLButtonElement;
     const deleteBtn = this.el.querySelector('.playlist-delete') as HTMLButtonElement;
     addBtn.disabled = !active;
