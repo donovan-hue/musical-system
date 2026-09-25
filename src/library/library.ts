@@ -46,6 +46,8 @@ export interface TrackMeta {
   hasAudio: boolean;
   analysis: AnalysisState;
   analysisError?: string;
+  /** Etiquetas libres del usuario (bases para búsquedas y smart playlists). */
+  tags?: string[];
 }
 
 export interface Playlist {
@@ -187,7 +189,7 @@ export class Library {
   }
 
   /** Actualiza metadatos editables (título, artista, álbum, género, fecha, nº). */
-  async updateMetadata(id: string, patch: Partial<Pick<TrackMeta, 'title' | 'artist' | 'album' | 'genre' | 'date' | 'trackNumber'>>): Promise<TrackMeta | null> {
+  async updateMetadata(id: string, patch: Partial<Pick<TrackMeta, 'title' | 'artist' | 'album' | 'genre' | 'date' | 'trackNumber' | 'tags'>>): Promise<TrackMeta | null> {
     const track = this.getTrack(id);
     if (!track) return null;
     Object.assign(track, patch);

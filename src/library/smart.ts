@@ -17,6 +17,7 @@ export type SmartField =
   | 'addedAt'
   | 'source'
   | 'format'
+  | 'tags'
   | 'favorite';
 
 export type SmartOp = 'contains' | 'equals' | 'gte' | 'lte';
@@ -58,6 +59,8 @@ function fieldValue(track: TrackMeta, field: SmartField): string | number | bool
       return track.origin?.type ?? 'import';
     case 'format':
       return track.quality?.format ?? '';
+    case 'tags':
+      return (track.tags ?? []).join(' ');
     case 'favorite':
       return !!track.favorite;
   }
@@ -112,6 +115,7 @@ const OPS_BY_FIELD: Record<SmartField, SmartOp[]> = {
   addedAt: ['gte', 'lte'],
   source: ['equals', 'contains'],
   format: ['equals', 'contains'],
+  tags: ['contains', 'equals'],
   favorite: ['equals'],
 };
 
@@ -129,6 +133,7 @@ export const SMART_FIELDS: SmartField[] = [
   'addedAt',
   'source',
   'format',
+  'tags',
   'album',
   'title',
   'favorite',
@@ -145,5 +150,6 @@ export const FIELD_LABELS: Record<SmartField, string> = {
   addedAt: 'Fecha de incorporación',
   source: 'Fuente',
   format: 'Formato',
+  tags: 'Etiquetas',
   favorite: 'Favorita',
 };

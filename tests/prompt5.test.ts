@@ -81,6 +81,21 @@ describe('playlists inteligentes (evaluador)', () => {
     expect(opsForField('title')).toContain('contains');
   });
 
+  it('filtra por etiquetas (tags) reales', () => {
+    const withTags: TrackMeta[] = [
+      track({ id: 't1', tags: ['abierta', 'calentamiento'] }),
+      track({ id: 't2', tags: ['cierre', 'melódica'] }),
+      track({ id: 't3' }),
+    ];
+    const warmup: SmartPlaylist = {
+      id: 'tg',
+      name: 'Calentamiento',
+      match: 'all',
+      rules: [{ field: 'tags', op: 'contains', value: 'calentamiento' }],
+    };
+    expect(evaluateSmart(warmup, withTags).map((t) => t.id)).toEqual(['t1']);
+  });
+
   it('filtra por fuente y formato reales', () => {
     const withMeta = [
       track({ id: 's', origin: { type: 'spotify' }, quality: { format: 'OPUS', codec: 'opus', bitrateKbps: 160, sampleRate: 48000, channels: 2 } }),
@@ -267,6 +282,30 @@ describe('biblioteca: referencias, dedup y portabilidad', () => {
     expect(other.tracks[0]?.title).toBe('A');
     expect(other.playlists[0]?.name).toBe('Set');
     expect(other.getTrack(t.id)).not.toBeNull();
+  });
+
+  it('updateMetadata guarda etiquetas y campos editables', async () => {
+    const l = await lib();
+    const t = await l.addTrack(
+      {
+        fileName: 'a.mp3',
+        title: 'A',
+        artist: 'X',
+        album: '',
+        bpm: 120,
+        bpmSource: 'tag',
+        durationSec: 10,
+        sizeBytes: 3,
+        peaks: [],
+        hasAudio: true,
+        analysis: 'complete',
+      },
+      new Uint8Array([1]),
+    );
+    await l.updateMetadata(t.id, { genre: 'House', tags: ['calentamiento', ' 126 BPM '] });
+    const updated = l.getTrack(t.id)!;
+    expect(updated.genre).toBe('House');
+    expect(updated.tags).toEqual(['calentamiento', ' 126 BPM ']);
   });
 
   it('análisis: estado y datos reales persisten', async () => {

@@ -24,7 +24,7 @@ export interface LibraryCallbacks {
   onRemoveFromPlaylist(playlistId: string, trackId: string): void;
   onMove(playlistId: string, trackId: string, delta: -1 | 1): void;
   /** Edición real de metadatos. */
-  onUpdateMetadata(trackId: string, patch: Partial<Pick<TrackMeta, 'title' | 'artist' | 'album' | 'genre' | 'date' | 'trackNumber'>>): void;
+  onUpdateMetadata(trackId: string, patch: Partial<Pick<TrackMeta, 'title' | 'artist' | 'album' | 'genre' | 'date' | 'trackNumber' | 'tags'>>): void;
   /** Re-análisis real (decode → picos → BPM → tonalidad). */
   onReanalyze(trackId: string): void;
   /** Acciones por lotes. */
@@ -435,7 +435,7 @@ export class LibraryView {
     let list = [...this.tracks];
     if (query) {
       list = list.filter((t) =>
-        [t.title, t.artist, t.album, t.genre ?? '', t.fileName, t.spotifyId ?? ''].some((f) => f.toLowerCase().includes(query)),
+        [t.title, t.artist, t.album, t.genre ?? '', t.fileName, t.spotifyId ?? '', (t.tags ?? []).join(' ')].some((f) => f.toLowerCase().includes(query)),
       );
     }
     if (this.favOnly.checked) list = list.filter((t) => t.favorite);
@@ -644,6 +644,7 @@ export class LibraryView {
       { key: 'genre', label: 'Género' },
       { key: 'date', label: 'Año' },
       { key: 'trackNumber', label: 'Nº' },
+      { key: 'tags', label: 'Etiquetas' },
     ];
     const inputs = new Map<keyof TrackMeta, HTMLInputElement>();
     for (const { key, label } of fields) {
@@ -651,7 +652,7 @@ export class LibraryView {
       row.appendChild(el('span', '', label));
       const input = document.createElement('input');
       input.type = 'text';
-      input.value = String(track[key] ?? '');
+      input.value = Array.isArray(track[key]) ? (track[key] as string[]).join(', ') : String(track[key] ?? '');
       inputs.set(key, input);
       row.appendChild(input);
       wrap.appendChild(row);
@@ -667,6 +668,7 @@ export class LibraryView {
         genre: inputs.get('genre')!.value.trim(),
         date: inputs.get('date')!.value.trim(),
         trackNumber: inputs.get('trackNumber')!.value.trim(),
+        tags: inputs.get('tags')!.value.split(',').map((t) => t.trim()).filter((t) => t.length > 0),
       });
       this.editingId = null;
     });
@@ -754,6 +756,9 @@ export class LibraryView {
         const preview = button('btn btn-mini', this.previewingId === track.id ? '⏸' : '▶', 'Reproducir este elemento');
         preview.addEventListener('click', () => this.cb.onPreview(track.id));
         controls.appendChild(preview);
+        const reBtn = button('btn btn-mini', '↻', 'Analizar este elemento (BPM, tonalidad, waveform)');
+        reBtn.addEventListener('click', () => this.cb.onReanalyze(track.id));
+        controls.appendChild(reBtn);
         for (const deckId of ['A', 'B'] as const) {
           const btn = button('btn btn-mini', `→ ${deckId}`, `Cargar en Deck ${deckId}`);
           btn.addEventListener('click', () => this.cb.onLoadToDeck(track.id, deckId));
