@@ -14,6 +14,8 @@ function meta(overrides: Partial<TrackMeta> = {}): Omit<TrackMeta, 'id' | 'added
     durationSec: 180,
     sizeBytes: 1024,
     peaks: [0.2, 0.8, 0.5],
+    hasAudio: true,
+    analysis: 'complete',
     ...overrides,
   };
 }

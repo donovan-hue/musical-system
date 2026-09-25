@@ -1,6 +1,6 @@
 import { formatBytes, formatTime } from '../util/format.js';
 import { validateConvertUrl } from '../util/convertUrl.js';
-import { requestConversion, startDownload } from './convertApi.js';
+import { requestAudio, startDownload, type AudioQuality } from './convertApi.js';
 
 type Toast = (message: string, kind?: 'info' | 'error' | 'ok') => void;
 
@@ -8,7 +8,7 @@ export interface ConverterCallbacks {
   /** Guarda el MP3 convertido en la biblioteca local (pipeline real de importación). */
   onAddToLibrary(
     blob: Blob,
-    info: { fileName: string; title: string; durationSec: number | null; sourceUrl: string },
+    info: { fileName: string; title: string; durationSec: number | null; sourceUrl: string; quality: AudioQuality },
   ): Promise<void>;
 }
 
@@ -36,7 +36,7 @@ export class ConverterView {
   private currentObjectUrl: string | null = null;
   private readonly toast: Toast;
   private lastBlob: Blob | null = null;
-  private lastInfo: { fileName: string; title: string; durationSec: number | null; sourceUrl: string } | null = null;
+  private lastInfo: { fileName: string; title: string; durationSec: number | null; sourceUrl: string; quality: AudioQuality } | null = null;
   private inLibrary = false;
 
   constructor(toast: Toast, cb: ConverterCallbacks) {
@@ -46,14 +46,18 @@ export class ConverterView {
     this.el.className = 'converter';
     this.el.innerHTML = `
       <div class="lib-head">
-        <h2>Convertidor a MP3</h2>
-        <span class="lib-hint">Descarga el audio de una URL con yt-dlp + FFmpeg y bájalo como MP3.</span>
+        <h2>Fuentes de audio (URL)</h2>
+        <span class="lib-hint">Trae el audio de una URL conservando su calidad original (o conviértelo a MP3 320 si lo pides).</span>
       </div>
       <form class="convert-form">
         <input class="convert-url" type="text" inputmode="url" autocomplete="off" spellcheck="false"
           placeholder="Pega la URL del video o audio (YouTube, etc.)">
-        <button class="btn btn-convert" type="submit">⤓ Convertir a MP3</button>
+        <button class="btn btn-convert" type="submit">⤓ Traer audio</button>
       </form>
+      <div class="convert-mode" role="radiogroup" aria-label="Calidad de descarga">
+        <label><input class="mode-original" type="radio" name="convert-mode" checked> Conservar original (sin re-codificar, máxima calidad)</label>
+        <label><input class="mode-mp3" type="radio" name="convert-mode"> Convertir a MP3 320 kbps (compatibilidad)</label>
+      </div>
       <div class="convert-status" hidden></div>
       <div class="convert-error" hidden></div>
       <div class="convert-result" hidden>
@@ -103,7 +107,8 @@ export class ConverterView {
     this.timer = window.setInterval(tick, 500);
 
     // 3. Solicitud real al backend y 4. detección real de éxito/error.
-    const outcome = await requestConversion(check.url);
+    const mode = (this.el.querySelector('.mode-mp3') as HTMLInputElement).checked ? 'mp3' : 'original';
+    const outcome = await requestAudio(check.url, mode);
     window.clearInterval(this.timer);
     this.setBusy(false);
     this.statusEl.hidden = true;
@@ -118,13 +123,16 @@ export class ConverterView {
     this.resultEl.hidden = false;
     this.downloadLink.querySelector('.convert-filename')!.textContent = outcome.fileName;
     this.resultMeta.textContent =
-      `${outcome.durationSec !== null ? `${formatTime(outcome.durationSec)} · ` : ''}${formatBytes(outcome.sizeBytes)}`;
+      `${outcome.durationSec !== null ? `${formatTime(outcome.durationSec)} · ` : ''}${formatBytes(outcome.sizeBytes)}` +
+      ` · ${[outcome.quality.format, outcome.quality.bitrateKbps != null ? `${outcome.quality.bitrateKbps} kbps` : null, outcome.quality.codec ?? null].filter(Boolean).join(' · ')}` +
+      (outcome.quality.preserved ? ' · original conservado' : ' · re-codificado a MP3 320');
     this.lastBlob = outcome.blob;
     this.lastInfo = {
       fileName: outcome.fileName,
       title: outcome.title,
       durationSec: outcome.durationSec,
       sourceUrl: this.input.value.trim(),
+      quality: outcome.quality,
     };
     this.inLibrary = false;
     this.libraryBtn.disabled = false;

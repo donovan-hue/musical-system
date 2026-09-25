@@ -624,3 +624,101 @@ input[type='number'] { width: 70px; }
   .dock-tab { min-height: 44px; }
   canvas.wave { height: 72px; }
 }
+
+/* ---------- FASE 5: biblioteca, lotes, fuentes, inteligentes ---------- */
+
+.lib-spotify {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  flex-wrap: wrap;
+}
+.lib-spotify-hint { color: var(--muted); font-size: 0.75rem; flex: 1; min-width: 200px; }
+.spotify-url { flex: 1; min-width: 220px; }
+
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid #35476b;
+  background: rgba(34, 211, 238, 0.06);
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+.batch-count { font-size: 0.8rem; color: var(--accent-a); font-weight: 700; margin-right: 4px; }
+
+.match-panel {
+  border: 1px solid #35476b;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: rgba(167, 139, 250, 0.06);
+}
+.match-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.match-title { font-weight: 700; font-size: 0.85rem; }
+.match-hint { color: var(--muted); font-size: 0.75rem; margin: 6px 0; }
+.match-list { list-style: none; margin: 0; padding: 0; max-height: 180px; overflow: auto; }
+.match-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 6px 4px; border-bottom: 1px solid rgba(36, 48, 74, 0.5); font-size: 0.82rem;
+}
+.match-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match-error { color: #fca5a5; }
+
+table.tracks td.td-quality,
+table.tracks td.td-src,
+table.tracks td.td-analysis { font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
+tr.no-audio td { opacity: 0.65; }
+.src-badge {
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 1px 7px; font-size: 0.68rem;
+}
+.src-badge.src-spotify { border-color: #1db954; color: #57d38c; }
+.src-badge.src-convert { border-color: #22d3ee; color: #67e0f4; }
+.src-badge.src-match { border-color: #a78bfa; color: #c4b5fd; }
+.td-analysis.analysis-ok { color: #86efac; }
+.td-analysis.analysis-partial { color: #fcd34d; }
+.td-analysis.analysis-pending { color: var(--muted); font-weight: 700; }
+.td-analysis.analysis-error { color: #fca5a5; font-weight: 700; }
+.td-check { width: 26px; }
+
+.meta-editor { display: flex; flex-direction: column; gap: 4px; min-width: 220px; }
+.meta-row { display: flex; gap: 6px; align-items: center; font-size: 0.75rem; color: var(--muted); }
+.meta-row input { flex: 1; min-width: 0; }
+.meta-controls { display: flex; gap: 4px; margin-top: 2px; }
+
+.smart-create { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.smart-create input { flex: 1 1 60px; min-width: 50px; }
+.smart-create select { max-width: 90px; }
+ul.smart-list { list-style: none; margin: 0; padding: 0; }
+ul.smart-list li { padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+ul.smart-list li.active { background: rgba(167, 139, 250, 0.18); color: var(--text); }
+
+.import-queue { padding: 14px; }
+.iq-head { display: flex; justify-content: space-between; align-items: center; }
+.iq-summary { color: var(--muted); font-size: 0.8rem; margin: 6px 0; }
+.iq-list { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow: auto; }
+.iq-item { display: flex; gap: 8px; padding: 5px 4px; border-bottom: 1px solid rgba(36,48,74,.5); font-size: 0.82rem; }
+.iq-icon { width: 18px; text-align: center; }
+.iq-completada .iq-icon { color: #86efac; }
+.iq-procesando .iq-icon { color: #fcd34d; }
+.iq-pendiente .iq-icon { color: var(--muted); }
+.iq-error .iq-icon { color: #fca5a5; }
+.iq-error .iq-label { color: #fca5a5; }
+
+.convert-mode {
+  display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap;
+  font-size: 0.78rem; color: var(--muted);
+}
+.convert-mode label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
+.convert-mode input { accent-color: var(--accent-a); }
+
+@media (max-width: 1150px) {
+  table.tracks td.td-quality, table.tracks td.td-src { display: none; }
+}
+@media (max-width: 720px) {
+  table.tracks td.td-analysis, table.tracks td.td-genre { display: none; }
+}

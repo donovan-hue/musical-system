@@ -80,3 +80,39 @@ tests/            58 pruebas vitest sobre módulos puros
 ```
 
 CI: `.github/workflows/ci.yml` — `npm ci → typecheck → lint → test → build` en cada push/PR (Node 22).
+
+## Fase 5 — Biblioteca real, playlists y calidad de audio
+
+### Modelo de datos
+- **Pista física** (bytes en OPFS/IndexedDB + metadatos completos) separada de **referencia en playlist** (`trackIds`): una playlist nunca es un archivo; una pista puede vivir en muchas playlists sin copiarse.
+- Metadatos por pista: título, artista, álbum, género, año, nº de pista, duración, portada (APIC real o URL de Spotify), BPM (tag/estimado/manual), tonalidad (cromas+Krumhansl), waveform, **calidad real** (formato, códec ffprobe, bitrate efectivo, sample rate, canales), fuente (`Archivo`/`URL`/`Spotify`/`Fuente elegida`), URL de origen, **hash SHA-256** (dedup), `spotifyId`, estado de análisis (`✓ / ◐ / PENDIENTE / ✗`) y fecha de importación.
+- **Deduplicación**: importar dos veces el mismo archivo (o traer un audio idéntico) no crea copias; en playlists solo se añaden referencias.
+
+### Calidad de audio (regla absoluta: no degradar)
+- `POST /api/fetch-audio` (`{"url": "...", "mode": "original"|"mp3"}`):
+  - `original` (**por defecto**): sirve el archivo descargado por yt-dlp **sin re-codificar** (`X-Audio-Preserved: 1`) y reporta calidad real vía ffprobe (`X-Audio-Codec/Bitrate/Samplerate/Channels`).
+  - `mp3`: conversión **explícita** a MP3 320 kbps, solo cuando el usuario la elige.
+- `POST /api/convert` (legado, MP3 192) sigue disponible por compatibilidad.
+
+### Spotify (legítimo)
+- `POST /api/spotify/playlist` usa la **API oficial** con Client Credentials: nombre, propietario, portada, orden y metadatos de cada pista (título, artista, álbum, duración, nº, fecha, `spotifyId`, URL exacta).
+- **Nunca extrae audio protegido**: las pistas se crean como referencias "pendientes de fuente de audio autorizada". Sin `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` el endpoint responde **501** con el requisito exacto (nada simulado).
+- `POST /api/match` busca candidatos reales (yt-dlp `ytsearch5`); **el usuario elige** la fuente exacta — el sistema jamás sustituye remixes/live/edits silenciosamente.
+
+### Playlists inteligentes
+- Especificaciones persistidas (campo/operador/valor sobre artista, género, BPM, tonalidad, duración, fecha, fuente, formato, favorita…) que se **evalúan siempre al vuelo** (`src/library/smart.ts`, con pruebas). Nunca materializan copias.
+
+### UI de biblioteca
+Buscador; filtro por fuente y favoritas; orden (recientes/título/artista/BPM/duración); **multiselección** con acciones por lote (→A, →B, ＋playlist, ↻ re-analizar, ✕ quitar); **reproducción previa** (▶ con HTMLAudio real); edición inline de metadatos; columnas de **calidad**, **fuente** y **estado de análisis** (real: "PENDIENTE DE ANÁLISIS", nunca valores inventados); playlists numeradas `01 — Artista — Canción` con ▶/→A/→B por elemento; pestaña **⇪ Lotes** con progreso individual (Pista 1 — completada / 2 — procesando / 3 — pendiente / 4 — error) donde un fallo no cancela el resto; **exportar/importar metadatos** (JSON portátil).
+
+### Dónde vive cada cosa
+| Qué | Dónde |
+| --- | --- |
+| Bytes de audio y grabaciones | OPFS (respaldo IndexedDB, último recurso memoria) |
+| Metadatos, playlists, smart, cola, historial | Documento JSON en el mismo store (`library.v1`) |
+| Ajustes del mezclador | `localStorage` |
+| Conversión/fuentes/Spotify/match | Servidor sin estado (endpoints, sin base de datos) |
+| Cache | Solo la del navegador |
+
+### Requisito externo identificado (Spotify)
+Para activar la importación de metadatos: crea credenciales en developer.spotify.com/dashboard (Web API) y define `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` como variables de entorno del servidor. Sin ellas, la función queda explícitamente marcada como "autorización requerida" (HTTP 501).

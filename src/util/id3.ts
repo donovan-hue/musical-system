@@ -10,6 +10,8 @@ export interface Id3Tags {
   bpm?: number;
   genre?: string;
   date?: string;
+  /** Número de pista (frame TRCK), tal como viene ("3" o "3/12"). */
+  trackNumber?: string;
   artwork?: Id3Artwork;
 }
 
@@ -188,6 +190,7 @@ export function parseId3(bytes: Uint8Array): Id3Tags {
       if (Number.isFinite(bpm) && bpm > 0) tags.bpm = bpm;
     } else if (id === 'TCON') tags.genre ??= text;
     else if (id === 'TDRC' || id === 'TYER' || id === 'TYE') tags.date ??= text;
+    else if (id === 'TRCK' || id === 'TRK') tags.trackNumber ??= text;
   }
   return tags;
 }

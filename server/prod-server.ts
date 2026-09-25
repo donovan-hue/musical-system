@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handleConvertRequest } from './convert-http.ts';
+import { handleApiRequest } from './convert-http.ts';
 
 /**
  * Servidor de producción mínimo: sirve dist/ estático + POST /api/convert
@@ -57,8 +57,8 @@ async function serveStatic(url: string, res: import('node:http').ServerResponse)
 
 const port = Number(process.env.PORT ?? 8080);
 createServer((req, res) => {
-  if (req.url?.startsWith('/api/convert')) {
-    void handleConvertRequest(req, res);
+  if (req.url?.startsWith('/api')) {
+    void handleApiRequest(req, res);
     return;
   }
   void serveStatic(req.url ?? '/', res);

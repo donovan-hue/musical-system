@@ -1,5 +1,12 @@
 import type { TrackStore } from './storage.js';
 import type { KeyInfo } from '../audio/key.js';
+import type { QualityInfo } from '../util/quality.js';
+import type { SmartPlaylist } from './smart.js';
+
+export type TrackOriginType = 'import' | 'convert' | 'spotify' | 'match';
+
+/** Estado REAL del análisis (nunca se inventan valores). */
+export type AnalysisState = 'complete' | 'partial' | 'pending' | 'failed';
 
 export interface TrackMeta {
   id: string;
@@ -18,15 +25,27 @@ export interface TrackMeta {
   key?: KeyInfo | null;
   genre?: string;
   date?: string;
+  /** Número de pista (tag TRCK o metadato Spotify). */
+  trackNumber?: string;
   /** Miniatura real de la carátula ID3 (JPEG/PNG a 96 px, data URL). */
   artwork?: string;
-  /** Origen real de la pista. */
-  origin?: { type: 'import' | 'convert'; sourceUrl?: string };
+  /** Origen real de la pista y su URL de origen cuando existe. */
+  origin?: { type: TrackOriginType; sourceUrl?: string };
   favorite?: boolean;
   /** Hot cues 1..8 persistidos (posición en segundos; null = vacío). */
   hotCues?: (number | null)[];
   playCount?: number;
   lastPlayedAt?: string | null;
+  /** Calidad real medida (formato, códec, bitrate, sample rate, canales). */
+  quality?: QualityInfo;
+  /** SHA-256 del archivo original: deduplicación por contenido. */
+  contentHash?: string;
+  /** Identificación exacta en Spotify (cuando la pista viene de ahí). */
+  spotifyId?: string;
+  /** false = solo metadatos: necesita una fuente de audio autorizada. */
+  hasAudio: boolean;
+  analysis: AnalysisState;
+  analysisError?: string;
 }
 
 export interface Playlist {
@@ -52,6 +71,8 @@ export interface RecordingMeta {
 export interface LibraryData {
   tracks: TrackMeta[];
   playlists: Playlist[];
+  /** Playlists inteligentes: especificaciones evaluadas al vuelo. */
+  smartPlaylists: SmartPlaylist[];
   /** Cola de reproducción: ids en orden real, persistida. */
   queue: string[];
   history: { events: HistoryEvent[] };
@@ -71,16 +92,24 @@ export function newId(): string {
  * quitar una pista quita sus bytes, hot cues y referencias.
  */
 export class Library {
-  private data: LibraryData = { tracks: [], playlists: [], queue: [], history: { events: [] }, recordings: [] };
+  private data: LibraryData = { tracks: [], playlists: [], smartPlaylists: [], queue: [], history: { events: [] }, recordings: [] };
 
   constructor(private readonly store: TrackStore) {}
 
   async init(): Promise<void> {
     const saved = await this.store.getJson<Partial<LibraryData>>(LIBRARY_KEY);
     if (saved && Array.isArray(saved.tracks)) {
+      // Migración: pistas guardadas antes de los campos de análisis/audio.
+      for (const track of saved.tracks) {
+        if (track.hasAudio === undefined) track.hasAudio = true;
+        if (track.analysis === undefined) {
+          track.analysis = (track.peaks?.length ?? 0) > 0 ? 'complete' : 'pending';
+        }
+      }
       this.data = {
         tracks: saved.tracks,
         playlists: Array.isArray(saved.playlists) ? saved.playlists : [],
+        smartPlaylists: Array.isArray(saved.smartPlaylists) ? saved.smartPlaylists : [],
         queue: Array.isArray(saved.queue) ? saved.queue : [],
         history: saved.history && Array.isArray(saved.history.events) ? saved.history : { events: [] },
         recordings: Array.isArray(saved.recordings) ? saved.recordings : [],
@@ -113,11 +142,131 @@ export class Library {
   }
 
   async addTrack(meta: Omit<TrackMeta, 'id' | 'addedAt'>, bytes: Uint8Array): Promise<TrackMeta> {
-    const track: TrackMeta = { ...meta, id: newId(), addedAt: new Date().toISOString() };
+    const track: TrackMeta = {
+      ...meta,
+      id: newId(),
+      addedAt: new Date().toISOString(),
+      hasAudio: meta.hasAudio ?? true,
+      analysis: meta.analysis ?? 'complete',
+    };
     await this.store.putBytes(track.id, bytes);
     this.data.tracks = [track, ...this.data.tracks];
     await this.persist();
     return track;
+  }
+
+  /** Añade una pista SOLO de metadatos (sin bytes): referencia Spotify pendiente de audio. */
+  async addMetadataTrack(meta: Omit<TrackMeta, 'id' | 'addedAt' | 'hasAudio' | 'analysis'>): Promise<TrackMeta> {
+    const track: TrackMeta = { ...meta, id: newId(), addedAt: new Date().toISOString(), hasAudio: false, analysis: 'pending' };
+    this.data.tracks = [track, ...this.data.tracks];
+    await this.persist();
+    return track;
+  }
+
+  /** Adjunta bytes reales a una pista que era solo metadatos (fuente autorizada encontrada). */
+  async attachAudio(id: string, bytes: Uint8Array, patch: Partial<TrackMeta>): Promise<TrackMeta | null> {
+    const track = this.getTrack(id);
+    if (!track) return null;
+    await this.store.putBytes(id, bytes);
+    Object.assign(track, patch, { hasAudio: true });
+    await this.persist();
+    return track;
+  }
+
+  /** Duplicado por contenido (hash) o por identificación exacta de Spotify. */
+  findDuplicate(contentHash?: string, spotifyId?: string): TrackMeta | null {
+    if (spotifyId) {
+      const bySpotify = this.data.tracks.find((t) => t.spotifyId === spotifyId);
+      if (bySpotify) return bySpotify;
+    }
+    if (contentHash) {
+      const byHash = this.data.tracks.find((t) => t.contentHash === contentHash);
+      if (byHash) return byHash;
+    }
+    return null;
+  }
+
+  /** Actualiza metadatos editables (título, artista, álbum, género, fecha, nº). */
+  async updateMetadata(id: string, patch: Partial<Pick<TrackMeta, 'title' | 'artist' | 'album' | 'genre' | 'date' | 'trackNumber'>>): Promise<TrackMeta | null> {
+    const track = this.getTrack(id);
+    if (!track) return null;
+    Object.assign(track, patch);
+    await this.persist();
+    return track;
+  }
+
+  /** Guarda el resultado real (o el fallo) de un análisis. */
+  async setAnalysis(id: string, state: AnalysisState, error?: string): Promise<void> {
+    const track = this.getTrack(id);
+    if (!track) return;
+    track.analysis = state;
+    track.analysisError = error;
+    await this.persist();
+  }
+
+  async setQuality(id: string, quality: QualityInfo): Promise<void> {
+    const track = this.getTrack(id);
+    if (!track) return;
+    track.quality = quality;
+    await this.persist();
+  }
+
+  /** Guarda el resultado de (re)analizar: picos, BPM y tonalidad reales. */
+  async setTrackAnalysisData(
+    id: string,
+    data: Partial<Pick<TrackMeta, 'peaks' | 'bpm' | 'bpmSource' | 'key' | 'durationSec'>>,
+  ): Promise<void> {
+    const track = this.getTrack(id);
+    if (!track) return;
+    Object.assign(track, data);
+    await this.persist();
+  }
+
+  // ---------- Playlists inteligentes ----------
+
+  get smartPlaylists(): readonly SmartPlaylist[] {
+    return this.data.smartPlaylists;
+  }
+
+  async addSmartPlaylist(playlist: SmartPlaylist): Promise<void> {
+    this.data.smartPlaylists = [...this.data.smartPlaylists, playlist];
+    await this.persist();
+  }
+
+  async removeSmartPlaylist(id: string): Promise<void> {
+    this.data.smartPlaylists = this.data.smartPlaylists.filter((p) => p.id !== id);
+    await this.persist();
+  }
+
+  // ---------- Portabilidad de metadatos ----------
+
+  /** Documento portátil: pistas + playlists + smart (los bytes no viajan). */
+  exportDoc(): LibraryData {
+    return structuredClone(this.data);
+  }
+
+  /** Fusiona un documento: pistas nuevas por id/hash, sin duplicar físicos. */
+  async importDoc(doc: LibraryData): Promise<{ added: number; skipped: number }> {
+    let added = 0;
+    let skipped = 0;
+    for (const track of doc.tracks ?? []) {
+      if (this.getTrack(track.id) || this.findDuplicate(track.contentHash, track.spotifyId)) {
+        skipped += 1;
+        continue;
+      }
+      this.data.tracks = [track, ...this.data.tracks];
+      added += 1;
+    }
+    for (const playlist of doc.playlists ?? []) {
+      if (this.data.playlists.some((p) => p.id === playlist.id)) continue;
+      this.data.playlists = [...this.data.playlists, playlist];
+    }
+    for (const smart of doc.smartPlaylists ?? []) {
+      if (this.data.smartPlaylists.some((p) => p.id === smart.id)) continue;
+      this.data.smartPlaylists = [...this.data.smartPlaylists, smart];
+    }
+    await this.persist();
+    return { added, skipped };
   }
 
   async removeTrack(id: string): Promise<void> {

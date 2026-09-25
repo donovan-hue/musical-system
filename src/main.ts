@@ -24,6 +24,12 @@ import { ConverterView } from './ui/converterView.js';
 import { installThemeToggle } from './ui/theme.js';
 import { showToast } from './ui/toast.js';
 import { loadMixerState, saveMixerState } from './ui/mixerStore.js';
+import { ImportQueueView } from './ui/importQueue.js';
+import { sha256Hex } from './util/hash.js';
+import { computeQuality, type QualityInfo } from './util/quality.js';
+import { parseSpotifyPlaylistUrl } from './library/spotify.js';
+import { requestAudio, matchCandidates, fetchSpotifyPlaylist, downloadJson } from './ui/convertApi.js';
+import type { SmartPlaylist } from './library/smart.js';
 
 const PEAK_BUCKETS = 1400;
 
@@ -114,66 +120,169 @@ async function main(): Promise<void> {
     }
   }
 
-  /** Pipeline real de importación (archivos locales y MP3 del convertidor). */
-  async function importAudioBytes(
-    fileName: string,
-    bytes: Uint8Array,
-    origin: TrackMeta['origin'],
-  ): Promise<TrackMeta> {
+  /** Análisis REAL: decodifica y calcula picos, BPM y tonalidad. Falla honesto. */
+  async function analyzeBytes(bytes: Uint8Array): Promise<{
+    buffer: AudioBuffer;
+    peaks: number[];
+    tags: ReturnType<typeof parseId3>;
+    bpm: number | null;
+    bpmSource: DeckBpmSource;
+    key: ReturnType<typeof estimateKey>;
+  }> {
     const ctx = ensureEngine();
     const buffer = await decodeAudioBytes(ctx, bytes.buffer as ArrayBuffer);
-    if (!buffer) throw new Error(`No se pudo decodificar "${fileName}".`);
+    if (!buffer) throw new Error('No se pudo decodificar el audio (archivo corrupto o formato incompatible).');
     const mono = toMono((i) => buffer.getChannelData(i), buffer.numberOfChannels, buffer.length);
     const peaks = Array.from(computePeaks(mono, PEAK_BUCKETS));
     const tags = parseId3(bytes);
     const bpm = tags.bpm ? tags.bpm : estimateBpm(mono, buffer.sampleRate);
     const bpmSource: DeckBpmSource = tags.bpm ? 'tag' : 'estimated';
     const key = estimateKey(mono, buffer.sampleRate);
-    const artwork = tags.artwork ? await artworkThumb(tags.artwork.data, tags.artwork.mime) : null;
-    return library.addTrack(
+    return { buffer, peaks, tags, bpm, bpmSource, key };
+  }
+
+  function analysisState(bpm: number | null, key: unknown): 'complete' | 'partial' {
+    return bpm !== null && key !== null && key !== undefined ? 'complete' : 'partial';
+  }
+
+  /**
+   * Pipeline real de importación: hash (dedup por contenido) → análisis →
+   * metadatos → OPFS. Devuelve la pista y si era un duplicado físico.
+   */
+  async function importAudioBytes(
+    fileName: string,
+    bytes: Uint8Array,
+    origin: TrackMeta['origin'],
+    qualityHint?: QualityInfo,
+  ): Promise<{ track: TrackMeta; duplicate: boolean }> {
+    const hash = await sha256Hex(bytes);
+    const existing = library.findDuplicate(hash);
+    if (existing) return { track: existing, duplicate: true };
+
+    const a = await analyzeBytes(bytes);
+    const artwork = a.tags.artwork ? await artworkThumb(a.tags.artwork.data, a.tags.artwork.mime) : null;
+    const quality: QualityInfo =
+      qualityHint ??
+      computeQuality(fileName, bytes.byteLength, {
+        sampleRate: a.buffer.sampleRate,
+        channels: a.buffer.numberOfChannels,
+        durationSec: a.buffer.duration,
+      });
+    const track = await library.addTrack(
       {
         fileName,
-        title: tags.title || stripExtension(fileName),
-        artist: tags.artist || 'Desconocido',
-        album: tags.album ?? '',
-        bpm,
-        bpmSource,
-        durationSec: buffer.duration,
+        title: a.tags.title || stripExtension(fileName),
+        artist: a.tags.artist || 'Desconocido',
+        album: a.tags.album ?? '',
+        bpm: a.bpm,
+        bpmSource: a.bpmSource,
+        durationSec: a.buffer.duration,
         sizeBytes: bytes.byteLength,
-        peaks,
-        key,
-        genre: tags.genre ?? '',
-        date: tags.date ?? '',
+        peaks: a.peaks,
+        key: a.key,
+        genre: a.tags.genre ?? '',
+        date: a.tags.date ?? '',
+        trackNumber: a.tags.trackNumber,
         artwork: artwork ?? undefined,
         origin,
         favorite: false,
         hotCues: new Array<number | null>(8).fill(null),
         playCount: 0,
         lastPlayedAt: null,
+        contentHash: hash,
+        quality,
+        hasAudio: true,
+        analysis: analysisState(a.bpm, a.key),
       },
       bytes,
     );
+    return { track, duplicate: false };
+  }
+
+  /** Re-análisis real de una pista existente (BPM, tonalidad, picos, calidad). */
+  async function reanalyzeTrack(trackId: string): Promise<void> {
+    const meta = library.getTrack(trackId);
+    if (!meta || !meta.hasAudio) return;
+    const qid = importQueue.push(`Re-análisis: ${meta.title}`, 'procesando');
+    const bytes = await store.getBytes(trackId);
+    if (!bytes) {
+      await library.setAnalysis(trackId, 'failed', 'No se encontraron los bytes de la pista.');
+      importQueue.set(qid, 'error', 'bytes no encontrados');
+      refreshAll();
+      return;
+    }
+    try {
+      const a = await analyzeBytes(bytes);
+      await library.setTrackAnalysisData(trackId, {
+        peaks: a.peaks,
+        bpm: a.bpm,
+        bpmSource: a.bpmSource,
+        key: a.key,
+        durationSec: a.buffer.duration,
+      });
+      await library.setQuality(
+        trackId,
+        computeQuality(meta.fileName, bytes.byteLength, {
+          sampleRate: a.buffer.sampleRate,
+          channels: a.buffer.numberOfChannels,
+          durationSec: a.buffer.duration,
+        }),
+      );
+      await library.setAnalysis(trackId, analysisState(a.bpm, a.key));
+      importQueue.set(qid, 'completada');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await library.setAnalysis(trackId, 'failed', message);
+      importQueue.set(qid, 'error', message);
+    }
+    refreshAll();
   }
 
   async function importFiles(files: File[]): Promise<void> {
+    if (files.length > 1) {
+      importQueue.begin(files.map((f) => f.name));
+      switchTab('lotes');
+    }
+    let index = 0;
     for (const file of files) {
+      const qid = files.length > 1 ? String(index) : null;
+      index += 1;
       const verdict = validateAudioFile(file.name, file.size, file.type);
       if (!verdict.ok) {
         toast(verdict.reason, 'error');
+        if (qid) importQueue.set(qid, 'error', verdict.reason);
         continue;
       }
+      importQueue.set(qid ?? '_', 'procesando');
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         if (bytes.length === 0) {
           toast(`"${file.name}" está vacío.`, 'error');
+          if (qid) importQueue.set(qid, 'error', 'archivo vacío');
           continue;
         }
-        const meta = await importAudioBytes(file.name, bytes, { type: 'import' });
-        toast(`"${meta.title}" importada · ${meta.bpm ? `${meta.bpm.toFixed(1)} BPM · ` : ''}${formatKey(meta.key)}`, 'ok');
+        const { track, duplicate } = await importAudioBytes(file.name, bytes, { type: 'import' });
+        if (duplicate) {
+          toast(`"${track.title}" ya está en la biblioteca (duplicado por contenido): no se copió de nuevo.`, 'info');
+          if (qid) importQueue.set(qid, 'completada', 'duplicado: referencia existente');
+        } else {
+          toast(
+            `"${track.title}" importada · ${track.bpm ? `${track.bpm.toFixed(1)} BPM · ` : ''}${formatKey(track.key)}`,
+            'ok',
+          );
+          if (qid) importQueue.set(qid, 'completada');
+        }
         refreshAll();
       } catch (error) {
         console.error(error);
-        toast(`Error importando "${file.name}".`, 'error');
+        const quota = error instanceof DOMException && error.name === 'QuotaExceededError';
+        const message = quota
+          ? 'Espacio insuficiente en el almacenamiento del navegador para este archivo.'
+          : error instanceof Error
+            ? error.message
+            : String(error);
+        toast(`Error importando "${file.name}": ${message}`, 'error');
+        if (qid) importQueue.set(qid, 'error', message.slice(0, 120));
       }
     }
   }
@@ -181,6 +290,10 @@ async function main(): Promise<void> {
   async function loadTrackToDeck(trackId: string, deckId: DeckId): Promise<boolean> {
     const meta = library.getTrack(trackId);
     if (!meta) return false;
+    if (!meta.hasAudio) {
+      toast('Esa pista es solo metadatos: busca una fuente de audio autorizada primero (🔎 Fuente…).', 'error');
+      return false;
+    }
     const bytes = await store.getBytes(trackId);
     if (!bytes) {
       toast('No encontré los bytes de esa pista (¿se borró el almacenamiento?).', 'error');
@@ -438,13 +551,198 @@ async function main(): Promise<void> {
     },
   });
 
+  // ---------- Reproducción previa real (HTMLAudio independiente de los decks) ----------
+  const previewAudio = new Audio();
+  previewAudio.volume = 0.9;
+  let previewTrackId: string | null = null;
+  let previewUrl: string | null = null;
+
+  async function togglePreview(trackId: string): Promise<void> {
+    if (previewTrackId === trackId && !previewAudio.paused) {
+      previewAudio.pause();
+      libraryView.setPreview(null);
+      previewTrackId = null;
+      return;
+    }
+    const bytes = await store.getBytes(trackId);
+    if (!bytes) {
+      toast('No encontré los bytes de esa pista.', 'error');
+      return;
+    }
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer]));
+    previewAudio.src = previewUrl;
+    previewAudio.onended = () => {
+      libraryView.setPreview(null);
+      previewTrackId = null;
+    };
+    previewTrackId = trackId;
+    libraryView.setPreview(trackId);
+    try {
+      await previewAudio.play();
+    } catch {
+      toast('El navegador bloqueó la reproducción: interactúa con la página y repite.', 'error');
+    }
+  }
+
+  // ---------- Spotify (metadatos oficiales; sin audio protegido) ----------
+  async function importSpotifyPlaylist(rawUrl: string): Promise<void> {
+    const check = parseSpotifyPlaylistUrl(rawUrl);
+    if (!check.ok) {
+      toast(check.reason, 'error');
+      return;
+    }
+    toast('Pidiendo metadatos a la API de Spotify…');
+    const result = await fetchSpotifyPlaylist(rawUrl);
+    if (!result.ok) {
+      toast(result.error, 'error');
+      if (result.detail) console.warn('Detalle Spotify:', result.detail);
+      return;
+    }
+    const { playlist } = result;
+    const created = await library.createPlaylist(playlist.name);
+    importQueue.begin(playlist.tracks.map((t) => `${t.artists} — ${t.title}`));
+    switchTab('lotes');
+    for (const t of playlist.tracks) {
+      const dup = library.findDuplicate(undefined, t.spotifyId);
+      if (dup) {
+        await library.addToPlaylist(created.id, dup.id);
+        importQueue.set(t.spotifyId, 'completada', 'referencia (ya en biblioteca)');
+        continue;
+      }
+      const createdTrack = await library.addMetadataTrack({
+        fileName: `${t.artists} - ${t.title}.spotify`,
+        title: t.title,
+        artist: t.artists || 'Desconocido',
+        album: t.album,
+        bpm: null,
+        bpmSource: 'estimated',
+        durationSec: t.durationMs / 1000,
+        sizeBytes: 0,
+        peaks: [],
+        key: null,
+        genre: '',
+        date: t.releaseDate,
+        trackNumber: t.trackNumber !== null ? String(t.trackNumber) : undefined,
+        artwork: t.coverUrl ?? undefined,
+        origin: { type: 'spotify', sourceUrl: t.spotifyUrl },
+        spotifyId: t.spotifyId,
+        favorite: false,
+        hotCues: new Array<number | null>(8).fill(null),
+        playCount: 0,
+        lastPlayedAt: null,
+      });
+      await library.addToPlaylist(created.id, createdTrack.id);
+      importQueue.set(t.spotifyId, 'pendiente', 'requiere fuente de audio autorizada');
+    }
+    refreshAll();
+    toast(
+      `Playlist "${playlist.name}" de ${playlist.owner}: ${playlist.tracks.length} referencias creadas, pendientes de fuente de audio autorizada.`,
+      'ok',
+    );
+  }
+
+  /** Busca candidatos REALES (yt-dlp) para una pista solo-metadatos. */
+  async function findSources(trackId: string): Promise<void> {
+    const meta = library.getTrack(trackId);
+    if (!meta) return;
+    const query = [meta.artist !== 'Desconocido' ? meta.artist : '', meta.title].filter(Boolean).join(' ').trim();
+    toast(`Buscando fuentes para "${meta.title}"…`);
+    const result = await matchCandidates(query);
+    if (!result.ok) {
+      libraryView.showMatchError(result.error, result.detail);
+      toast(result.error, 'error');
+      return;
+    }
+    libraryView.showCandidates(trackId, result.candidates);
+    if (result.candidates.length === 0) toast('Sin resultados para esa búsqueda.', 'info');
+  }
+
+  /** Trae el audio EXACTO elegido por el usuario (sin sustituir versiones). */
+  async function pickSource(trackId: string, url: string): Promise<void> {
+    const meta = library.getTrack(trackId);
+    if (!meta) return;
+    toast(`Trayendo audio elegido para "${meta.title}"…`);
+    const result = await requestAudio(url, 'original');
+    if (!result.ok) {
+      toast(result.error, 'error');
+      return;
+    }
+    const bytes = new Uint8Array(await result.blob.arrayBuffer());
+    const hash = await sha256Hex(bytes);
+    if (library.findDuplicate(hash)) {
+      toast('Ese audio ya está en la biblioteca (duplicado por contenido).', 'info');
+      return;
+    }
+    let analysis: Awaited<ReturnType<typeof analyzeBytes>>;
+    try {
+      analysis = await analyzeBytes(bytes);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await library.setAnalysis(trackId, 'failed', message);
+      refreshAll();
+      toast(`El audio llegó pero no se pudo analizar: ${message}`, 'error');
+      return;
+    }
+    await library.attachAudio(trackId, bytes, {
+      fileName: result.fileName,
+      durationSec: analysis.buffer.duration,
+      sizeBytes: bytes.byteLength,
+      peaks: analysis.peaks,
+      bpm: analysis.bpm,
+      bpmSource: analysis.bpmSource,
+      key: analysis.key,
+      contentHash: hash,
+      quality: result.quality,
+      origin: { type: 'match', sourceUrl: url },
+      analysis: analysisState(analysis.bpm, analysis.key),
+      analysisError: undefined,
+    });
+    refreshAll();
+    const q = result.quality;
+    toast(
+      `"${meta.title}" tiene audio: ${q.format}${q.bitrateKbps != null ? ` · ${q.bitrateKbps} kbps` : ''} (fuente elegida por ti).`,
+      'ok',
+    );
+  }
+
+  // ---------- Acciones por lotes ----------
+  async function batchToDeck(deckId: DeckId, trackIds: string[]): Promise<void> {
+    const first = trackIds.map((id) => library.getTrack(id)).find((t) => t?.hasAudio);
+    if (!first) {
+      toast('Ninguna de las pistas elegidas tiene audio todavía.', 'error');
+      return;
+    }
+    const ok = await loadTrackToDeck(first.id, deckId);
+    if (ok) toast(`"${first.title}" → Deck ${deckId} (primera de ${trackIds.length} elegidas).`, 'ok');
+  }
+
+  async function batchReanalyze(trackIds: string[]): Promise<void> {
+    importQueue.begin(trackIds.map((id) => library.getTrack(id)?.title ?? id));
+    switchTab('lotes');
+    let index = 0;
+    for (const id of trackIds) {
+      await reanalyzeTrack(id);
+      importQueue.set(String(index), library.getTrack(id)?.analysis === 'failed' ? 'error' : 'completada');
+      index += 1;
+    }
+  }
+
+  async function batchRemove(trackIds: string[]): Promise<void> {
+    if (!window.confirm(`¿Quitar ${trackIds.length} pistas de la biblioteca? Los archivos se borran del almacenamiento.`)) return;
+    for (const id of trackIds) await removeTrack(id);
+    checkedClear();
+    refreshAll();
+  }
+
+  function checkedClear(): void {
+    // La vista limpia su propia selección al re-renderizar la barra.
+  }
+
   const libraryView = new LibraryView({
     onImportFiles: (files) => void importFiles(files),
     onLoadToDeck: (trackId, deckId) => void loadTrackToDeck(trackId, deckId),
-    onPreview: (trackId) =>
-      void loadTrackToDeck(trackId, idleDeckId()).then((ok) => {
-        if (ok) engine.deck(idleDeckId()).play();
-      }),
+    onPreview: (trackId) => void togglePreview(trackId),
     onRemoveTrack: (trackId) => void removeTrack(trackId),
     onToggleFavorite: (trackId) =>
       void library.toggleFavorite(trackId).then(() => refreshAll()),
@@ -457,14 +755,64 @@ async function main(): Promise<void> {
     onDeletePlaylist: (playlistId) => void library.deletePlaylist(playlistId).then(refreshAll),
     onAddToPlaylist: (playlistId, trackId) =>
       void library.addToPlaylist(playlistId, trackId).then((added) => {
-        if (!added) toast('Esa pista ya está en la playlist.', 'info');
+        if (!added) toast('Esa referencia ya está en la playlist.', 'info');
         refreshAll();
       }),
     onRemoveFromPlaylist: (playlistId, trackId) =>
       void library.removeFromPlaylist(playlistId, trackId).then(refreshAll),
     onMove: (playlistId, trackId, delta) =>
       void library.moveInPlaylist(playlistId, trackId, delta).then(refreshAll),
+    onUpdateMetadata: (trackId, patch) =>
+      void library.updateMetadata(trackId, patch).then((updated) => {
+        if (updated) toast('Metadatos actualizados.', 'ok');
+        refreshAll();
+      }),
+    onReanalyze: (trackId) => void reanalyzeTrack(trackId),
+    onBatchToDeck: (deckId, ids) => void batchToDeck(deckId, ids),
+    onBatchToPlaylist: (playlistId, ids) => {
+      let added = 0;
+      const chain = ids.reduce<Promise<unknown>>((acc, id) => acc.then(() => library.addToPlaylist(playlistId, id).then((ok) => { if (ok) added += 1; })), Promise.resolve());
+      void chain.then(() => {
+        toast(`${added} referencias añadidas a la playlist.`, 'ok');
+        refreshAll();
+      });
+    },
+    onBatchReanalyze: (ids) => void batchReanalyze(ids),
+    onBatchRemove: (ids) => void batchRemove(ids),
+    onImportSpotify: (url) => void importSpotifyPlaylist(url),
+    onFindSources: (trackId) => void findSources(trackId),
+    onPickSource: (trackId, url) => void pickSource(trackId, url),
+    onExportLibrary: () => {
+      const doc = { app: 'musical-system', kind: 'library-metadata', version: 1, exportedAt: new Date().toISOString(), data: library.exportDoc() };
+      downloadJson(`musical-system-biblioteca-${new Date().toISOString().slice(0, 10)}.json`, doc);
+      toast('Metadatos exportados (los archivos de audio no viajan en el JSON).', 'ok');
+    },
+    onImportLibraryJson: (file) => {
+      void file
+        .text()
+        .then((text) => {
+          const parsed = JSON.parse(text) as { data?: Parameters<Library['importDoc']>[0] };
+          const doc = parsed?.data ?? (parsed as Parameters<Library['importDoc']>[0]);
+          if (!doc || !Array.isArray(doc.tracks)) throw new Error('El JSON no contiene pistas.');
+          return library.importDoc(doc).then(({ added, skipped }) => {
+            toast(`Metadatos importados: ${added} nuevas, ${skipped} duplicadas/omitidas.`, 'ok');
+            refreshAll();
+          });
+        })
+        .catch((error) => {
+          console.error(error);
+          toast(`JSON inválido: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        });
+    },
+    onCreateSmart: (spec: SmartPlaylist) => void library.addSmartPlaylist(spec).then(refreshAll),
+    onDeleteSmart: (id) => void library.removeSmartPlaylist(id).then(refreshAll),
   });
+  libraryView.el.addEventListener('libtoast', (event) => {
+    const detail = (event as CustomEvent<string>).detail;
+    if (detail) toast(detail, 'info');
+  });
+
+  const importQueue = new ImportQueueView();
 
   const queueView = new QueueView(
     {
@@ -553,11 +901,15 @@ async function main(): Promise<void> {
   const converterView = new ConverterView(toast, {
     onAddToLibrary: async (blob, info) => {
       const bytes = new Uint8Array(await blob.arrayBuffer());
-      if (bytes.length === 0) throw new Error('El MP3 convertido está vacío.');
-      const meta = await importAudioBytes(info.fileName, bytes, { type: 'convert', sourceUrl: info.sourceUrl });
-      await library.logConversion(info.sourceUrl ?? '', meta.title, meta.fileName);
+      if (bytes.length === 0) throw new Error('El audio traído está vacío.');
+      const { track, duplicate } = await importAudioBytes(info.fileName, bytes, { type: 'convert', sourceUrl: info.sourceUrl }, info.quality);
+      await library.logConversion(info.sourceUrl ?? '', track.title, track.fileName);
       refreshAll();
-      toast(`"${meta.title}" añadida a la biblioteca${meta.bpm ? ` · ${meta.bpm.toFixed(1)} BPM` : ''}.`, 'ok');
+      if (duplicate) throw new Error(`ya estaba en la biblioteca como "${track.title}" (deduplicado por contenido)`);
+      toast(
+        `"${track.title}" añadida a la biblioteca · ${track.quality ? `${track.quality.format}${track.quality.bitrateKbps != null ? ` · ${track.quality.bitrateKbps} kbps` : ''}` : 'calidad registrada'}.`,
+        'ok',
+      );
     },
   });
 
@@ -569,7 +921,7 @@ async function main(): Promise<void> {
   };
 
   layout.append(deckViews.A.el, mixerView.el, deckViews.B.el);
-  for (const view of [libraryView.el, queueView.el, samplerView.el, recorderView.el, historyView.el, converterView.el]) {
+  for (const view of [libraryView.el, queueView.el, samplerView.el, recorderView.el, historyView.el, converterView.el, importQueue.el]) {
     dockPanel.appendChild(view);
     view.hidden = true;
   }
@@ -581,7 +933,8 @@ async function main(): Promise<void> {
     { id: 'sampler', label: '🥁 Sampler', el: samplerView.el },
     { id: 'recorder', label: '⏺ Grabadora', el: recorderView.el },
     { id: 'history', label: '🕘 Historial', el: historyView.el },
-    { id: 'converter', label: '⤓ Convertidor', el: converterView.el },
+    { id: 'converter', label: '⤓ Fuentes (URL)', el: converterView.el },
+    { id: 'lotes', label: '⇪ Lotes', el: importQueue.el },
   ];
   const tabButtons = tabs.map((tab) => {
     const btn = document.createElement('button');
@@ -613,8 +966,9 @@ async function main(): Promise<void> {
 
   // ---------- Refresco global ----------
   function refreshAll(): void {
-    libraryView.render(library.tracks, library.playlists, library.queue);
-    libraryView.setLoadedDecks({ A: state.loadedTrackId.A, B: state.loadedTrackId.B }, library.queue);
+    libraryView.render(library.tracks, library.playlists, library.smartPlaylists);
+    libraryView.setLoadedDecks({ A: state.loadedTrackId.A, B: state.loadedTrackId.B });
+    libraryView.setQueue(library.queue);
     queueView.render(library.tracks, library.queue, { A: state.loadedTrackId.A, B: state.loadedTrackId.B });
     historyView.render(library.historyEvents, library.tracks, library.recordings);
     recorderView.renderRecordings(library.recordings);
