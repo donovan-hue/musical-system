@@ -14,6 +14,7 @@ import { validateConvertUrl } from '../src/util/convertUrl.ts';
 export type ConvertErrorCode =
   | 'BAD_URL'
   | 'BUSY'
+  | 'RATE_LIMIT'
   | 'TOOLS_MISSING'
   | 'PROBE_FAILED'
   | 'DOWNLOAD_FAILED'
@@ -245,7 +246,7 @@ export async function fetchAudio(rawUrl: string, mode: FetchMode): Promise<Fetch
     throw new ConvertError('BUSY', 'Hay una conversión en proceso; inténtalo de nuevo en unos segundos.', { status: 503 });
   }
   active += 1;
-  const dir = await mkdtemp(path.join(tmpdir(), 'musical-fetch-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'audiolad-fetch-'));
   try {
     const info = await probe(check.url);
     const sourcePath = await downloadAudio(check.url, dir);
@@ -450,7 +451,7 @@ export async function convertToMp3(rawUrl: string): Promise<ConvertResult> {
     throw new ConvertError('BUSY', 'Hay una conversión en proceso; inténtalo de nuevo en unos segundos.', { status: 503 });
   }
   active += 1;
-  const dir = await mkdtemp(path.join(tmpdir(), 'musical-convert-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'audiolad-convert-'));
   try {
     const info = await probe(check.url);
     const sourcePath = await downloadAudio(check.url, dir);

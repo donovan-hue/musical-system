@@ -4,6 +4,52 @@ import { fetchSpotifyPlaylist, spotifyErrorPayload } from './spotify.ts';
 
 const MAX_BODY_BYTES = 10_000;
 
+// ---------- Limitador de peticiones por IP (Rate Limiter con ventana deslizante) ----------
+
+interface RateBucket {
+  tokens: number;
+  lastRefill: number;
+}
+const RATE_LIMIT_CAPACITY = 30; // Máximo 30 peticiones por ráfaga
+const RATE_LIMIT_REFILL_MS = 60_000; // Recarga por minuto
+const RATE_LIMIT_REFILL_RATE = RATE_LIMIT_CAPACITY / RATE_LIMIT_REFILL_MS;
+const ipBuckets = new Map<string, RateBucket>();
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  let bucket = ipBuckets.get(ip);
+  if (!bucket) {
+    bucket = { tokens: RATE_LIMIT_CAPACITY - 1, lastRefill: now };
+    ipBuckets.set(ip, bucket);
+    return true;
+  }
+  const delta = now - bucket.lastRefill;
+  bucket.tokens = Math.min(RATE_LIMIT_CAPACITY, bucket.tokens + delta * RATE_LIMIT_REFILL_RATE);
+  bucket.lastRefill = now;
+  if (bucket.tokens >= 1) {
+    bucket.tokens -= 1;
+    return true;
+  }
+  return false;
+}
+
+// Limpieza periódica de IPs inactivas para evitar fugas de memoria en el servidor
+const rateCleanupTimer = setInterval(() => {
+  const cutoff = Date.now() - 120_000;
+  for (const [ip, b] of ipBuckets.entries()) {
+    if (b.lastRefill < cutoff) ipBuckets.delete(ip);
+  }
+}, 180_000);
+if (typeof rateCleanupTimer.unref === 'function') rateCleanupTimer.unref();
+
+// ---------- Cabeceras de seguridad ----------
+
+function applySecurityHeaders(res: ServerResponse): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+}
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -22,8 +68,13 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+function sendJson(res: ServerResponse, status: number, body: unknown, extraHeaders: Record<string, string> = {}): void {
+  applySecurityHeaders(res);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    ...extraHeaders,
+  });
   res.end(JSON.stringify(body));
 }
 
@@ -77,6 +128,7 @@ async function handleFetchAudio(req: IncomingMessage, res: ServerResponse): Prom
 
   try {
     const result = await fetchAudio(url, mode);
+    applySecurityHeaders(res);
     res.writeHead(200, {
       'Content-Type': result.contentType,
       'Content-Length': String(result.bytes.byteLength),
@@ -88,7 +140,7 @@ async function handleFetchAudio(req: IncomingMessage, res: ServerResponse): Prom
       'X-Audio-Samplerate': result.quality.sampleRate !== null ? String(result.quality.sampleRate) : '',
       'X-Audio-Channels': result.quality.channels !== null ? String(result.quality.channels) : '',
       'X-Audio-Preserved': result.preserved ? '1' : '0',
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
     });
     res.end(result.bytes);
   } catch (err) {
@@ -103,13 +155,14 @@ async function handleConvertRequest(req: IncomingMessage, res: ServerResponse): 
   if (url === null) return;
   try {
     const result = await convertToMp3(url);
+    applySecurityHeaders(res);
     res.writeHead(200, {
       'Content-Type': 'audio/mpeg',
       'Content-Length': String(result.mp3.byteLength),
       'Content-Disposition': contentDisposition(result.fileName),
       'X-Track-Title': encodeURIComponent(result.title),
       'X-Track-Duration': result.durationSec !== null ? String(Math.round(result.durationSec)) : '',
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
     });
     res.end(result.mp3);
   } catch (err) {
@@ -155,6 +208,27 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     sendJson(res, 405, { ok: false, code: 'BAD_URL', error: 'Método no permitido: envía POST con JSON.' });
     return;
   }
+
+  // Comprobación de Rate Limiting por IP del cliente
+  const forwarded = req.headers['x-forwarded-for'];
+  const clientIp = typeof forwarded === 'string'
+    ? forwarded.split(',')[0]?.trim() || 'unknown'
+    : req.socket.remoteAddress || 'unknown';
+
+  if (!checkRateLimit(clientIp)) {
+    sendJson(
+      res,
+      429,
+      {
+        ok: false,
+        code: 'RATE_LIMIT',
+        error: 'Demasiadas solicitudes al convertidor. Espera unos segundos antes de reintentar.',
+      },
+      { 'Retry-After': '10' },
+    );
+    return;
+  }
+
   // Normaliza la ruta cuando el middleware ya consumió el prefijo.
   const route = pathname === '/api' || pathname === '/api/' ? pathname : pathname.replace(/^\/api\/?/, '');
   switch (route) {

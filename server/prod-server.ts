@@ -27,15 +27,23 @@ const MIME: Record<string, string> = {
 };
 
 async function serveStatic(url: string, res: import('node:http').ServerResponse): Promise<void> {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=()');
+
   let pathname: string;
   try {
     pathname = decodeURIComponent(new URL(url, 'http://localhost').pathname);
   } catch {
     pathname = '/';
   }
+  if (pathname.includes('\0')) {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Bad request');
+    return;
+  }
   let target = path.normalize(path.join(distDir, pathname));
   if (!target.startsWith(distDir)) {
-    res.writeHead(403).end();
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Forbidden');
     return;
   }
   try {
@@ -63,5 +71,5 @@ createServer((req, res) => {
   }
   void serveStatic(req.url ?? '/', res);
 }).listen(port, '0.0.0.0', () => {
-  console.log(`musical-system (producción) en http://0.0.0.0:${port}`);
+  console.log(`audiolad-studio (producción) en http://0.0.0.0:${port}`);
 });
