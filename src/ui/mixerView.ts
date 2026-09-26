@@ -93,6 +93,7 @@ export class MixerView {
         <label class="mk-row">Low <input class="mk-low" type="range" min="${EQ_MIN}" max="${EQ_MAX}" step="1" value="0" aria-label="Graves canal ${id}"></label>
         <label class="mk-row mk-filter">Filter <input class="mk-filter" type="range" min="-1" max="1" step="0.01" value="0" aria-label="Filtro canal ${id}"></label>
         <label class="mk-row">Vol <input class="mk-vol" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen canal ${id}"></label>
+        <canvas class="mk-meter" aria-label="Medidor de nivel canal ${id}"></canvas>
         <button class="btn btn-mini mk-cue" aria-pressed="false" aria-label="CUE de monitorización canal ${id}">CUE</button>
       </div>`;
 

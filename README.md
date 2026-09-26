@@ -1,4 +1,4 @@
-# Musical System — Cabina DJ Digital
+# AudioLad Studio — Cabina DJ Digital
 
 Estación DJ completa que corre 100% en el navegador (escritorio y móvil), con biblioteca local persistente, convertidor URL→MP3 real (yt-dlp + FFmpeg) y motor de audio Web Audio. Nada de mocks: cada control está conectado al motor.
 
@@ -25,7 +25,10 @@ Estación DJ completa que corre 100% en el navegador (escritorio y móvil), con 
 - **🥁 Sampler**: 6 pads con sonidos **sintetizados en vivo** (kick, snare, clap, hat, tom, zap — osciladores/ruido/envolventes Web Audio), pad iluminado mientras suena, volumen propio, teclas A S D F G H.
 - **⏺ Grabadora**: **grabación real del bus master** con MediaRecorder (sin micrófono: graba el stream interno post-limitador), iniciar/pausar/continuar/detener, cronómetro, nombrar y guardar la sesión, lista con reproducción integrada, descarga (webm/opus, mp4 u ogg según navegador) y borrado.
 - **🕘 Historial**: pistas reproducidas (deck, fecha, segundos), conversiones realizadas y sesiones grabadas — todo persistido (tope 300 eventos), con borrado.
-- **⤓ Convertidor**: URL → `POST /api/convert` → **yt-dlp + FFmpeg → MP3 192 kbps** → descarga real + "Añadir a la biblioteca" (entra al mismo pipeline de análisis que los archivos locales).
+- **⤓ Convertidor**: URL → `POST /api/convert` y `POST /api/fetch-audio` → **yt-dlp + FFmpeg** → preservación de calidad de audio de origen o MP3 320 kbps → "Añadir a la biblioteca" con análisis completo. Incluye protección anti-SSRF y Rate Limiting por IP.
+- **⇪ Lotes**: cola de importación masiva con estado por pista individual.
+- **⚙️ Configuración**: diagnóstico en vivo del mecanismo de almacenamiento (OPFS/IndexedDB/RAM), cuota del navegador, estado del motor Web Audio, tabla de atajos y botón para restablecer el mezclador a valores iniciales.
+- **❓ Ayuda**: guía rápida de operación de la cabina, atajos, uso del jog, rejilla de beats y filtros.
 
 ## Tema claro y oscuro
 

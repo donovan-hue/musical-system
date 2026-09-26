@@ -619,10 +619,11 @@ input[type='number'] { width: 70px; }
 /* táctil: objetivos grandes */
 @media (pointer: coarse) {
   .btn { min-height: 44px; padding: 10px 14px; }
-  .btn-mini { min-height: 36px; padding: 6px 10px; }
+  .btn-mini { min-height: 44px; min-width: 44px; padding: 8px 12px; }
   .hot-cue { min-height: 48px; min-width: 48px; }
   .dock-tab { min-height: 44px; }
   canvas.wave { height: 72px; }
+  input[type='range'] { min-height: 36px; }
 }
 
 /* ---------- FASE 5: biblioteca, lotes, fuentes, inteligentes ---------- */
@@ -730,4 +731,117 @@ ul.smart-list li.active { background: rgba(167, 139, 250, 0.18); color: var(--te
   object-fit: cover;
   border: 1px solid var(--border);
   flex: 0 0 auto;
+}
+
+/* ---------- Settings & Help views ---------- */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.settings-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--input-bg) 40%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.settings-desc {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.settings-metric {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.82rem;
+  padding: 4px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.metric-label {
+  color: var(--muted);
+}
+.metric-val {
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+}
+.settings-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.shortcuts-table-wrap {
+  overflow-x: auto;
+}
+.shortcuts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.shortcuts-table th, .shortcuts-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.shortcuts-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+.shortcuts-table kbd {
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 0.75rem;
+  box-shadow: 0 1px 1px rgba(0,0,0,0.2);
+}
+
+.help-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.help-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--input-bg) 40%, transparent);
+}
+.help-section h3 {
+  margin-top: 0;
+  margin-bottom: 8px;
+  font-size: 0.95rem;
+}
+.help-section ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.82rem;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.help-section code {
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 0.78rem;
+}
+.help-section kbd {
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.75rem;
 }

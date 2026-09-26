@@ -169,7 +169,6 @@ export class AudioEngine {
     this.masterGain!.disconnect();
     this.limiter?.disconnect();
     this.masterAnalyser!.disconnect();
-    this.recTap?.disconnect();
 
     this.masterIn!.connect(this.masterGain!);
     if (this._limiterEnabled) {
@@ -180,7 +179,9 @@ export class AudioEngine {
     }
     this.masterAnalyser!.connect(this.masterOut!);
     this.masterOut!.connect(ctx.destination);
-    this.recTap?.connect(this.masterOut!); // la grabación escucha el bus post-límite
+    if (this.recTap) {
+      this.masterAnalyser!.connect(this.recTap); // la grabación escucha el bus post-límite
+    }
   }
 
   /** Stream real del bus master para MediaRecorder (null si el navegador no lo ofrece). */

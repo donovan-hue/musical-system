@@ -5,7 +5,7 @@ import { effectiveBpm, syncRate } from './audio/rate.js';
 import type { LoopBeats } from './audio/key.js';
 import { beatLoop, beatSeconds, estimateKey, formatKey } from './audio/key.js';
 import type { FxKind } from './audio/fx.js';
-import type { EqBand } from './audio/settings.js';
+import { DEFAULT_MIXER_STATE, type EqBand } from './audio/settings.js';
 import { MasterRecorder } from './audio/recorder.js';
 import { SAMPLER_PADS, type SamplerPad } from './audio/sampler.js';
 import type { TrackMeta } from './library/library.js';
@@ -21,6 +21,8 @@ import { SamplerView } from './ui/samplerView.js';
 import { RecorderView } from './ui/recorderView.js';
 import { HistoryView } from './ui/historyView.js';
 import { ConverterView } from './ui/converterView.js';
+import { SettingsView } from './ui/settingsView.js';
+import { HelpView } from './ui/helpView.js';
 import { installThemeToggle } from './ui/theme.js';
 import { showToast } from './ui/toast.js';
 import { loadMixerState, saveMixerState } from './ui/mixerStore.js';
@@ -48,8 +50,8 @@ async function main(): Promise<void> {
   app.innerHTML = `
     <header class="topbar">
       <div class="brand">
-        <h1>🎛️ Musical System</h1>
-        <span class="subtitle">Cabina DJ digital · 2 decks · biblioteca local · convertidor</span>
+        <h1>🎛️ AudioLad Studio</h1>
+        <span class="subtitle">Cabina DJ profesional · 2 decks · biblioteca local · convertidor</span>
       </div>
       <span class="spacer"></span>
       <button class="btn btn-mini theme-toggle" aria-label="Cambiar tema"></button>
@@ -783,8 +785,8 @@ async function main(): Promise<void> {
     onFindSources: (trackId) => void findSources(trackId),
     onPickSource: (trackId, url) => void pickSource(trackId, url),
     onExportLibrary: () => {
-      const doc = { app: 'musical-system', kind: 'library-metadata', version: 1, exportedAt: new Date().toISOString(), data: library.exportDoc() };
-      downloadJson(`musical-system-biblioteca-${new Date().toISOString().slice(0, 10)}.json`, doc);
+      const doc = { app: 'audiolad-studio', kind: 'library-metadata', version: 1, exportedAt: new Date().toISOString(), data: library.exportDoc() };
+      downloadJson(`audiolad-studio-biblioteca-${new Date().toISOString().slice(0, 10)}.json`, doc);
       toast('Metadatos exportados (los archivos de audio no viajan en el JSON).', 'ok');
     },
     onImportLibraryJson: (file) => {
@@ -913,6 +915,28 @@ async function main(): Promise<void> {
     },
   });
 
+  const settingsView = new SettingsView({
+    onResetMixer: () => {
+      const def = { ...DEFAULT_MIXER_STATE, decks: { A: { ...DEFAULT_MIXER_STATE.decks.A }, B: { ...DEFAULT_MIXER_STATE.decks.B } } };
+      ensureEngine();
+      engine.applyState(def);
+      saveMixerState(def);
+      mixerView.setFaders(def);
+      for (const id of ['A', 'B'] as const) {
+        deckViews[id].setPitchDisplay(1);
+      }
+      toast('Mezclador restablecido a sus valores por defecto.', 'ok');
+    },
+    onExportLibrary: () => {
+      const doc = { app: 'audiolad-studio', kind: 'library-metadata', version: 1, exportedAt: new Date().toISOString(), data: library.exportDoc() };
+      downloadJson(`audiolad-studio-biblioteca-${new Date().toISOString().slice(0, 10)}.json`, doc);
+      toast('Metadatos exportados (formato JSON).', 'ok');
+    },
+  });
+  settingsView.setStorageKind(store.kind);
+
+  const helpView = new HelpView();
+
   const deckCbs = { A: deckCallbacks('A'), B: deckCallbacks('B') };
   // Acento CSS (var) para la UI + color concreto para el canvas de la waveform.
   const deckViews: Record<DeckId, DeckView> = {
@@ -921,7 +945,17 @@ async function main(): Promise<void> {
   };
 
   layout.append(deckViews.A.el, mixerView.el, deckViews.B.el);
-  for (const view of [libraryView.el, queueView.el, samplerView.el, recorderView.el, historyView.el, converterView.el, importQueue.el]) {
+  for (const view of [
+    libraryView.el,
+    queueView.el,
+    samplerView.el,
+    recorderView.el,
+    historyView.el,
+    converterView.el,
+    importQueue.el,
+    settingsView.el,
+    helpView.el,
+  ]) {
     dockPanel.appendChild(view);
     view.hidden = true;
   }
@@ -935,6 +969,8 @@ async function main(): Promise<void> {
     { id: 'history', label: '🕘 Historial', el: historyView.el },
     { id: 'converter', label: '⤓ Fuentes (URL)', el: converterView.el },
     { id: 'lotes', label: '⇪ Lotes', el: importQueue.el },
+    { id: 'settings', label: '⚙️ Configuración', el: settingsView.el },
+    { id: 'help', label: '❓ Ayuda', el: helpView.el },
   ];
   const tabButtons = tabs.map((tab) => {
     const btn = document.createElement('button');
@@ -947,6 +983,10 @@ async function main(): Promise<void> {
     return btn;
   });
   function switchTab(id: string): void {
+    if (id === 'settings') {
+      settingsView.updateAudioEngineInfo(engine.booted ? engine.ensure() : null);
+      void settingsView.updateStorageEstimate();
+    }
     tabs.forEach((tab, index) => {
       const active = tab.id === id;
       tab.el.hidden = !active;
